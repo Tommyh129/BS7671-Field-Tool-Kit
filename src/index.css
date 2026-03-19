@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-hardware-bg: #0a0a0a;
+  --color-hardware-card: #151619;
+  --color-hardware-accent: #10b981; /* emerald-500 */
+  --color-hardware-border: rgba(255, 255, 255, 0.05);
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    user-select: none;
+  }
+  
+  body {
+    @apply bg-hardware-bg text-white font-sans antialiased;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+
+  input {
+    user-select: text;
+  }
+}
+
+@layer utilities {
+  .hardware-glow {
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+  }
+  
+  .dashed-ring {
+    background-image: url("data:image/svg+xml,%3csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3e%3crect width='100%25' height='100%25' fill='none' rx='32' ry='32' stroke='%23ffffff22' stroke-width='1' stroke-dasharray='6%2c 6' stroke-dashoffset='0' stroke-linecap='square'/%3e%3c/svg%3e");
+  }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}

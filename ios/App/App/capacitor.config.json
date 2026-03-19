@@ -1,0 +1,9 @@
+{
+	"appId": "com.bs7671.fieldtoolkit",
+	"appName": "BS7671 Field Toolkit",
+	"webDir": "dist",
+	"packageClassList": [
+		"FilesystemPlugin",
+		"SharePlugin"
+	]
+}
