@@ -98,7 +98,7 @@ async function startServer() {
                 name: "BS7671 Field Toolkit Pro Subscription",
                 description: "Unlock all advanced electrical design tools",
               },
-              unit_amount: 499, // £4.99
+              unit_amount: 599, // £5.99
             },
             quantity: 1,
           },
@@ -112,6 +112,41 @@ async function startServer() {
 
       res.json({ url: session.url });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Account Deletion
+  app.post("/api/delete-account", async (req, res) => {
+    const { idToken } = req.body;
+    if (!idToken) {
+      return res.status(400).json({ error: "Missing ID token" });
+    }
+
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const uid = decodedToken.uid;
+
+      console.log(`Deleting account for user: ${uid}`);
+
+      // 1. Delete History Subcollection
+      const historyRef = db.collection("users").doc(uid).collection("history");
+      const historySnapshot = await historyRef.get();
+      const batch = db.batch();
+      historySnapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+
+      // 2. Delete User Profile
+      await db.collection("users").doc(uid).delete();
+
+      // 3. Delete from Auth
+      await admin.auth().deleteUser(uid);
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting account:", error);
       res.status(500).json({ error: error.message });
     }
   });

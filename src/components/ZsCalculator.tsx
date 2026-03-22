@@ -222,6 +222,7 @@ Calculated via BS7671 Field Toolkit
             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Supply Type</label>
             <div className="relative">
               <select 
+                id="supply-system-select"
                 value={supplySystem}
                 onChange={(e) => setSupplySystem(e.target.value as SupplySystem)}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
@@ -238,6 +239,7 @@ Calculated via BS7671 Field Toolkit
           <div>
             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">External Impedance (Ze) Ω</label>
             <input 
+              id="ze-input"
               type="number"
               inputMode="decimal"
               value={ze}
@@ -250,6 +252,7 @@ Calculated via BS7671 Field Toolkit
           {/* Resistance Mode Toggle */}
           <div className="flex bg-black/40 p-1 rounded-2xl border border-hardware-border">
             <button
+              id="mode-per-meter-button"
               onClick={() => setUseTotalResistance(false)}
               className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
                 !useTotalResistance ? 'bg-emerald-500 text-black shadow-lg' : 'text-gray-500 hover:text-gray-300'
@@ -258,6 +261,7 @@ Calculated via BS7671 Field Toolkit
               Per Meter
             </button>
             <button
+              id="mode-total-ohms-button"
               onClick={() => setUseTotalResistance(true)}
               className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
                 useTotalResistance ? 'bg-emerald-500 text-black shadow-lg' : 'text-gray-500 hover:text-gray-300'
@@ -369,14 +373,15 @@ Calculated via BS7671 Field Toolkit
           {!useTotalResistance && (
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Cable Length (m)</label>
-              <input 
-                type="number"
-                inputMode="numeric"
-                value={cableLength}
-                onChange={(e) => setCableLength(e.target.value)}
-                placeholder="Enter length"
-                className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none"
-              />
+            <input 
+              id="cable-length-input"
+              type="number"
+              inputMode="numeric"
+              value={cableLength}
+              onChange={(e) => setCableLength(e.target.value)}
+              placeholder="Enter length"
+              className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none"
+            />
               {cableLength && (
                 <div className="flex justify-between px-2">
                   <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">Live R1+R2 Preview (70°C)</span>
@@ -423,6 +428,7 @@ Calculated via BS7671 Field Toolkit
           </div>
 
           <button
+            id="calculate-zs-button"
             onClick={() => setShowResult(true)}
             disabled={!useTotalResistance && !cableLength}
             className="w-full bg-emerald-500 text-black py-5 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-emerald-400 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale mt-4 shadow-lg shadow-emerald-500/20"

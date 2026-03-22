@@ -27,6 +27,7 @@ import {
   Star,
   LogOut,
   LogIn,
+  Apple,
   User as UserIcon,
   FileText,
   History as HistoryIcon
@@ -48,9 +49,12 @@ import History from './components/History';
 import { checkRegulatoryUpdates, RegulatoryUpdate } from './services/geminiService';
 import { saveCalculation } from './services/historyService';
 import { auth, db } from './firebase';
+import { Capacitor } from '@capacitor/core';
+import { InAppPurchase } from 'capacitor-plugin-purchase';
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
+  OAuthProvider,
   onAuthStateChanged, 
   signOut,
   User
@@ -124,6 +128,12 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+// --- Constants ---
+const PRIVACY_POLICY_URL = 'https://app.termly.io/policy-viewer/policy.html?policyUUID=6b10edd9-015b-429b-88bc-e8e2c415ed7d';
+const TERMS_OF_SERVICE_URL = 'https://app.termly.io/policy-viewer/policy.html?policyUUID=91dde6aa-55a2-4e06-bd83-2ae1c31dd091';
+const SUPPORT_URL = 'mailto:tommyholm@hotmail.co.uk';
+const PRO_PRODUCT_ID = 'pro_subscription'; // Match your App Store/Play Store ID
+
 export default function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.HOME);
   
@@ -174,11 +184,15 @@ export default function App() {
   };
 
   const effectiveIsPro = useMemo(() => {
-    // Paywall removed for testing
-    return true;
-  }, []);
+    return isPro;
+  }, [isPro]);
   
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteSuccess, setDeleteSuccess] = useState(false);
   
   // Shared States
   const [loadKw, setLoadKw] = useState<string>('');
@@ -345,16 +359,115 @@ export default function App() {
     testConnection();
   }, []);
 
-  const handleLogin = async () => {
+  const handleLogin = async (providerType: 'google' | 'apple' = 'google') => {
     try {
-      const provider = new GoogleAuthProvider();
+      const provider = providerType === 'google' 
+        ? new GoogleAuthProvider() 
+        : new OAuthProvider('apple.com');
       await signInWithPopup(auth, provider);
     } catch (error) {
-      console.error("Login failed", error);
+      console.error(`${providerType} login failed`, error);
     }
   };
 
+  // --- IAP Initialization ---
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    console.log("App: Initializing Native IAP...");
+    
+    const checkActivePurchases = async () => {
+      try {
+        const { purchases } = await InAppPurchase.getActivePurchases({ userId: user?.uid });
+        console.log("App: Active Purchases ->", purchases.length);
+        const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
+        if (hasPro) {
+          handleSuccessfulPurchase();
+        }
+      } catch (error) {
+        console.error("App: Failed to check active purchases", error);
+      }
+    };
+
+    if (user) {
+      checkActivePurchases();
+    }
+  }, [user]);
+
+  const handleSuccessfulPurchase = async () => {
+    if (!user) return;
+    console.log("App: Handling successful purchase for user:", user.uid);
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      await updateDoc(userDocRef, { isPro: true });
+      setIsPro(true);
+      setShowUpgradeModal(false);
+    } catch (error) {
+      console.error("App: Failed to update Pro status in Firestore", error);
+    }
+  };
+
+  const handleRestorePurchases = async () => {
+    if (!user) return;
+    
+    setIsSyncing(true);
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        console.log("App: Restoring Native Purchases...");
+        const { purchases } = await InAppPurchase.restorePurchases({ userId: user.uid });
+        const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
+        if (hasPro) {
+          handleSuccessfulPurchase();
+        }
+      } catch (error) {
+        console.error("App: Restore failed", error);
+      } finally {
+        setIsSyncing(false);
+      }
+      return;
+    }
+
+    // Web fallback (just sync with Firestore)
+    setTimeout(() => {
+      setIsSyncing(false);
+    }, 2000);
+  };
+
   const handleLogout = () => signOut(auth);
+
+  const handleDeleteAccount = async () => {
+    if (!user) return;
+    
+    setDeleteError(null);
+    setIsDeletingAccount(true);
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/delete-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setDeleteSuccess(true);
+        setTimeout(async () => {
+          await signOut(auth);
+          setShowSettingsModal(false);
+          setShowDeleteConfirm(false);
+          setDeleteSuccess(false);
+        }, 2000);
+      } else {
+        throw new Error(result.error || "Failed to delete account");
+      }
+    } catch (error: any) {
+      console.error("Delete account failed", error);
+      setDeleteError("Failed to delete account. You may need to re-authenticate first.");
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
 
   const handleUpgrade = async () => {
     if (!user) {
@@ -365,6 +478,31 @@ export default function App() {
     if (effectiveIsPro) return;
 
     setIsUpgrading(true);
+
+    // Use Native IAP if on mobile
+    if (Capacitor.isNativePlatform()) {
+      try {
+        console.log("App: Starting Native Purchase...");
+        const transaction = await InAppPurchase.purchaseProduct({ 
+          productId: PRO_PRODUCT_ID,
+          productType: 'non-consumable',
+          userId: user.uid
+        });
+        
+        if (transaction) {
+          console.log("App: Native Purchase success ->", transaction.transactionId);
+          handleSuccessfulPurchase();
+        }
+      } catch (error) {
+        console.error("App: Native Purchase failed", error);
+        alert("Purchase failed. Please try again.");
+      } finally {
+        setIsUpgrading(false);
+      }
+      return;
+    }
+
+    // Fallback to Stripe for Web
     try {
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
@@ -605,7 +743,15 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleModeChange = (newMode: AppMode) => {
-    if (newMode === AppMode.SMART_CIRCUIT && !effectiveIsPro) {
+    const proModes = [
+      AppMode.SMART_CIRCUIT,
+      AppMode.FAULT_CURRENT,
+      AppMode.EARTH_ELECTRODE,
+      AppMode.MAX_LENGTH,
+      AppMode.CABLE_RESISTANCE
+    ];
+    
+    if (proModes.includes(newMode) && !effectiveIsPro) {
       setShowUpgradeModal(true);
       return;
     }
@@ -726,6 +872,9 @@ Calculated via BS7671 Field Toolkit
         </div>
       )}
 
+      {/* Free Tools Section */}
+      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Free Tools</p>
+
       <button 
         onClick={() => handleModeChange(AppMode.ZS_CALCULATOR)}
         className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
@@ -739,6 +888,67 @@ Calculated via BS7671 Field Toolkit
         </div>
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-emerald-500 transition-colors" />
       </button>
+
+      <button 
+        onClick={() => handleModeChange(AppMode.VOLTAGE_DROP)}
+        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+      >
+        <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+          <Waves size={28} />
+        </div>
+        <div className="text-left">
+          <h3 className="font-bold text-lg text-white">Voltage Drop</h3>
+          <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Compliance Check</p>
+        </div>
+        <ChevronRight className="ml-auto text-gray-700 group-hover:text-blue-500 transition-colors" />
+      </button>
+
+      <button 
+        onClick={() => handleModeChange(AppMode.THREE_PHASE)}
+        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+      >
+        <div className="w-14 h-14 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
+          <Cpu size={28} />
+        </div>
+        <div className="text-left">
+          <h3 className="font-bold text-lg text-white">Power Calculator</h3>
+          <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">kW / Amps Converter</p>
+        </div>
+        <ChevronRight className="ml-auto text-gray-700 group-hover:text-purple-500 transition-colors" />
+      </button>
+
+      <button 
+        onClick={() => handleModeChange(AppMode.CABLE_FINDER)}
+        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+      >
+        <div className="w-14 h-14 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
+          <Search size={28} />
+        </div>
+        <div className="text-left">
+          <h3 className="font-bold text-lg text-white">Cable Finder</h3>
+          <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Size by Capacity</p>
+        </div>
+        <ChevronRight className="ml-auto text-gray-700 group-hover:text-purple-500 transition-colors" />
+      </button>
+
+      <button 
+        onClick={() => handleModeChange(AppMode.HISTORY)}
+        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+      >
+        <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+          <HistoryIcon size={28} />
+        </div>
+        <div className="text-left">
+          <h3 className="font-bold text-lg text-white">History</h3>
+          <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Past Calculations</p>
+        </div>
+        <ChevronRight className="ml-auto text-gray-700 group-hover:text-blue-500 transition-colors" />
+      </button>
+
+      {/* Pro Tools Section */}
+      <div className="mt-4 mb-2">
+        <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-1 ml-1">Pro Features</p>
+      </div>
 
       <button 
         onClick={() => handleModeChange(AppMode.SMART_CIRCUIT)}
@@ -762,115 +972,91 @@ Calculated via BS7671 Field Toolkit
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-emerald-500 transition-colors" />
       </button>
 
-      <button 
-        onClick={() => handleModeChange(AppMode.VOLTAGE_DROP)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
-      >
-        <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
-          <Waves size={28} />
-        </div>
-        <div className="text-left">
-          <h3 className="font-bold text-lg text-white">Voltage Drop</h3>
-          <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Compliance Check</p>
-        </div>
-        <ChevronRight className="ml-auto text-gray-700 group-hover:text-blue-500 transition-colors" />
-      </button>
-
       <div className="grid grid-cols-2 gap-4">
         <button 
           onClick={() => handleModeChange(AppMode.FAULT_CURRENT)}
-          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
             <Zap size={20} />
           </div>
           <div className="text-left">
-            <h3 className="font-bold text-sm text-white">Fault Current</h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-bold text-sm text-white">Fault Current</h3>
+              {!effectiveIsPro && <Lock size={10} className="text-gray-600" />}
+            </div>
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">kA Calculator</p>
           </div>
+          {!effectiveIsPro && (
+            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+              PRO
+            </div>
+          )}
         </button>
 
         <button 
           onClick={() => handleModeChange(AppMode.CABLE_RESISTANCE)}
-          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
             <Ruler size={20} />
           </div>
           <div className="text-left">
-            <h3 className="font-bold text-sm text-white">Resistance</h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-bold text-sm text-white">Resistance</h3>
+              {!effectiveIsPro && <Lock size={10} className="text-gray-600" />}
+            </div>
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">R1 + R2 Calculator</p>
           </div>
+          {!effectiveIsPro && (
+            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+              PRO
+            </div>
+          )}
         </button>
 
         <button 
           onClick={() => handleModeChange(AppMode.MAX_LENGTH)}
-          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-purple-500/10 rounded-xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
             <Maximize size={20} />
           </div>
           <div className="text-left">
-            <h3 className="font-bold text-sm text-white">Max Length</h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-bold text-sm text-white">Max Length</h3>
+              {!effectiveIsPro && <Lock size={10} className="text-gray-600" />}
+            </div>
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">Length Limits</p>
           </div>
+          {!effectiveIsPro && (
+            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+              PRO
+            </div>
+          )}
         </button>
 
         <button 
           onClick={() => handleModeChange(AppMode.EARTH_ELECTRODE)}
-          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
             <Activity size={20} />
           </div>
           <div className="text-left">
-            <h3 className="font-bold text-sm text-white">TT Electrode</h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-bold text-sm text-white">TT Electrode</h3>
+              {!effectiveIsPro && <Lock size={10} className="text-gray-600" />}
+            </div>
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">Earth Resistance</p>
           </div>
+          {!effectiveIsPro && (
+            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+              PRO
+            </div>
+          )}
         </button>
       </div>
-
-        <button 
-          onClick={() => handleModeChange(AppMode.THREE_PHASE)}
-          className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
-        >
-          <div className="w-14 h-14 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
-            <Cpu size={28} />
-          </div>
-          <div className="text-left">
-            <h3 className="font-bold text-lg text-white">Power Calculator</h3>
-            <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">kW / Amps Converter</p>
-          </div>
-          <ChevronRight className="ml-auto text-gray-700 group-hover:text-purple-500 transition-colors" />
-        </button>
-
-        <button 
-          onClick={() => handleModeChange(AppMode.HISTORY)}
-          className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
-        >
-          <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
-            <HistoryIcon size={28} />
-          </div>
-          <div className="text-left">
-            <h3 className="font-bold text-lg text-white">History</h3>
-            <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Past Calculations</p>
-          </div>
-          <ChevronRight className="ml-auto text-gray-700 group-hover:text-blue-500 transition-colors" />
-        </button>
-
-      <button 
-        onClick={() => handleModeChange(AppMode.CABLE_FINDER)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
-      >
-        <div className="w-14 h-14 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
-          <Search size={28} />
-        </div>
-        <div className="text-left">
-          <h3 className="font-bold text-lg text-white">Cable Finder</h3>
-          <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Size by Capacity</p>
-        </div>
-        <ChevronRight className="ml-auto text-gray-700 group-hover:text-purple-500 transition-colors" />
-      </button>
 
       {!effectiveIsPro && (
         <motion.div 
@@ -895,7 +1081,7 @@ Calculated via BS7671 Field Toolkit
                   Processing...
                 </>
               ) : (
-                'Upgrade Now • £4.99'
+                'Upgrade Now • £5.99'
               )}
             </button>
           </div>
@@ -931,9 +1117,9 @@ Calculated via BS7671 Field Toolkit
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30">
       {/* Header */}
-      <header className="bg-[#0a0a0a]/80 backdrop-blur-md border-b border-white/5 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 sticky top-0 z-20">
+      <header id="main-header" className="bg-[#0a0a0a]/80 backdrop-blur-md border-b border-white/5 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 sticky top-0 z-20">
         <div className="max-w-md mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
+          <div id="header-logo" className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
             <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
               <Zap size={18} fill="currentColor" />
             </div>
@@ -941,13 +1127,13 @@ Calculated via BS7671 Field Toolkit
           </div>
           <div className="flex items-center gap-3">
             {effectiveIsPro && (
-              <div className="bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded border border-emerald-500/20 text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
+              <div id="pro-badge" className="bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded border border-emerald-500/20 text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
                 <Star size={8} fill="currentColor" />
                 Pro
               </div>
             )}
             {user ? (
-              <button onClick={handleLogout} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+              <button id="settings-button" onClick={() => setShowSettingsModal(true)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
                 {user.photoURL ? (
                   <img src={user.photoURL} alt="" className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />
                 ) : (
@@ -955,12 +1141,17 @@ Calculated via BS7671 Field Toolkit
                 )}
               </button>
             ) : (
-              <button onClick={handleLogin} className="p-2 hover:bg-white/5 rounded-full transition-colors">
-                <LogIn size={20} className="text-gray-400" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button id="login-button-google" onClick={() => handleLogin('google')} className="p-2 hover:bg-white/5 rounded-full transition-colors" title="Sign in with Google">
+                  <LogIn size={20} className="text-gray-400" />
+                </button>
+                <button id="login-button-apple" onClick={() => handleLogin('apple')} className="p-2 hover:bg-white/5 rounded-full transition-colors" title="Sign in with Apple">
+                  <Apple size={20} className="text-gray-400" />
+                </button>
+              </div>
             )}
             {mode !== AppMode.HOME && (
-              <button onClick={goHome} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+              <button id="home-nav-button" onClick={goHome} className="p-2 hover:bg-white/5 rounded-full transition-colors">
                 <LayoutGrid size={20} className="text-gray-400" />
               </button>
             )}
@@ -1867,6 +2058,137 @@ Calculated via BS7671 Field Toolkit
           </div>
         )}
 
+        {showSettingsModal && (
+          <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSettingsModal(false)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-hardware-card border border-white/10 rounded-t-[40px] sm:rounded-[40px] p-8 overflow-hidden"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-2xl font-bold">Settings</h3>
+                <button onClick={() => setShowSettingsModal(false)} className="text-gray-500 hover:text-white">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                {user && (
+                  <div className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-white/5">
+                    {user.photoURL ? (
+                      <img src={user.photoURL} alt="" className="w-12 h-12 rounded-full" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+                        <UserIcon size={24} className="text-gray-400" />
+                      </div>
+                    )}
+                    <div>
+                      <p className="font-bold text-white">{user.displayName || "User"}</p>
+                      <p className="text-xs text-gray-500">{user.email}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Legal & Support</p>
+                  <button 
+                    onClick={() => window.open(PRIVACY_POLICY_URL, '_blank')}
+                    className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
+                  >
+                    <span className="text-sm font-medium">Privacy Policy</span>
+                    <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
+                  </button>
+                  <button 
+                    onClick={() => window.open(TERMS_OF_SERVICE_URL, '_blank')}
+                    className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
+                  >
+                    <span className="text-sm font-medium">Terms of Service</span>
+                    <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
+                  </button>
+                  <button 
+                    onClick={() => window.open(SUPPORT_URL, '_blank')}
+                    className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
+                  >
+                    <span className="text-sm font-medium">Support & Contact</span>
+                    <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Account Actions</p>
+                  <button 
+                    id="logout-button"
+                    onClick={() => {
+                      handleLogout();
+                      setShowSettingsModal(false);
+                    }}
+                    className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center gap-3 text-white transition-colors"
+                  >
+                    <LogOut size={18} className="text-gray-400" />
+                    <span className="text-sm font-medium">Log Out</span>
+                  </button>
+                  
+                  {!showDeleteConfirm ? (
+                    <button 
+                      id="delete-account-trigger"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="w-full p-4 bg-red-500/10 hover:bg-red-500/20 rounded-2xl text-left flex items-center gap-3 text-red-500 transition-colors"
+                    >
+                      <AlertTriangle size={18} />
+                      <span className="text-sm font-medium">Delete Account</span>
+                    </button>
+                  ) : (
+                    <div id="delete-confirmation-ui" className="p-4 bg-red-500/10 rounded-2xl border border-red-500/20 space-y-4">
+                      <p className="text-xs text-red-500 font-bold leading-relaxed">
+                        Are you sure? This action is permanent and will delete all your calculation history.
+                      </p>
+                      {deleteError && (
+                        <p className="text-[10px] text-red-400 bg-red-400/10 p-2 rounded-lg border border-red-400/20">
+                          {deleteError}
+                        </p>
+                      )}
+                      {deleteSuccess && (
+                        <p className="text-[10px] text-emerald-400 bg-emerald-400/10 p-2 rounded-lg border border-emerald-400/20">
+                          Account deleted successfully. Logging out...
+                        </p>
+                      )}
+                      <div className="flex gap-2">
+                        <button 
+                          id="confirm-delete-button"
+                          onClick={handleDeleteAccount}
+                          disabled={isDeletingAccount || deleteSuccess}
+                          className="flex-1 py-2 bg-red-500 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                        >
+                          {isDeletingAccount ? "Deleting..." : "Yes, Delete"}
+                        </button>
+                        <button 
+                          id="cancel-delete-button"
+                          onClick={() => {
+                            setShowDeleteConfirm(false);
+                            setDeleteError(null);
+                          }}
+                          disabled={isDeletingAccount || deleteSuccess}
+                          className="flex-1 py-2 bg-white/10 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {showUpgradeModal && (
           <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4">
             <motion.div 
@@ -1936,16 +2258,31 @@ Calculated via BS7671 Field Toolkit
                     Processing...
                   </>
                 ) : (
-                  'Upgrade to Pro • £4.99'
+                  'Upgrade to Pro • £5.99'
                 )}
               </button>
               
-              <button 
-                onClick={() => setShowUpgradeModal(false)}
-                className="w-full mt-4 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors"
-              >
-                Maybe Later
-              </button>
+              <div className="flex flex-col items-center gap-4 mt-6">
+                <button 
+                  onClick={handleRestorePurchases}
+                  className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors"
+                >
+                  Restore Purchases
+                </button>
+                
+                <p className="text-[8px] text-gray-600 text-center leading-relaxed max-w-[280px]">
+                  Payment will be charged to your account at confirmation of purchase. 
+                  Subscription automatically renews unless auto-renew is turned off at least 24-hours before the end of the current period.
+                  Manage your subscription in your Account Settings.
+                </p>
+
+                <button 
+                  onClick={() => setShowUpgradeModal(false)}
+                  className="py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors"
+                >
+                  Maybe Later
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
