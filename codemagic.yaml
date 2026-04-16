@@ -4,8 +4,6 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m1
     environment:
-      groups:
-        - app_store_credentials # This must match the Group Name you just created in the UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -20,54 +18,27 @@ workflows:
           npm run build
       - name: Re-create iOS folder and Set up Signing
         script: |
-          # 1. Credentials Check
-          if [ -z "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then
-            echo "ERROR: APP_STORE_CONNECT_PRIVATE_KEY is missing. Check your 'app_store_credentials' group in Codemagic UI."
-            exit 1
-          fi
-          
-          # 2. Start fresh
+          # 1. Start fresh
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           npx cap add ios
           
-          # 3. Force deployment target to 15.0 (for plugin compatibility)
+          # 2. Force deployment target to 15.0 (for plugin compatibility)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
           npx cap sync ios
           
-          # 4. Fetch Signing Files from Apple
-          app-store-connect fetch-signing-files "$APP_ID" --create
-          
-          # 5. Extract Profile Details
-          PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
-          if [ -z "$PROFILE_PATH" ]; then
-            echo "ERROR: No provisioning profile was downloaded. Verify your API Key permissions in App Store Connect."
-            exit 1
-          fi
-
-          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          export PROFILE_NAME=$(grep -aA1 "<key>Name</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          export PROFILE_UUID=$(grep -aA1 "<key>UUID</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          
-          # Persist for next step
-          echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
-          echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
-          echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
-          
-          echo "Success: Found Profile '$PROFILE_NAME' (Team: $TEAM_ID)"
-          
-          # 6. Force Manual Signing
-          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
+          # 3. Apply the uploaded UI profiles
+          # This command automatically finds the .p12 and profile you uploaded to the UI
           xcode-project use-profiles
       - name: Build iOS app
         script: |
+          # Build the IPA using the manual profiles
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME" \
-            --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
+            --scheme "$XCODE_SCHEME"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
