@@ -26,8 +26,11 @@ workflows:
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 2. FORCE MANUAL SIGNING (This fixes the "Requires a provisioning profile" error)
+          # 2. FORCE MANUAL SIGNING
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' {} +
+          
+          # 3. FORCE BUNDLE ID (This ensures it matches your App Store Connect ID)
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = $APP_ID;/g" {} +
           
           npx cap sync ios
       - name: Set up code signing
@@ -37,10 +40,10 @@ workflows:
           xcode-project use-profiles
       - name: Build iOS app
         script: |
+          # Build the .ipa file (Removed the invalid --bundle-id flag)
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME" \
-            --bundle-id "$APP_ID"
+            --scheme "$XCODE_SCHEME"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
