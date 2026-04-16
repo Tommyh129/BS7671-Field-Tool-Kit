@@ -7,7 +7,7 @@ workflows:
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
-        APP_ID: "com.bs7671.fieldtoolkit" # Your App ID from capacitor.config
+        APP_ID: "com.bs7671.fieldtoolkit"
       node: 22
     scripts:
       - name: Install dependencies
@@ -22,11 +22,15 @@ workflows:
           npx cap sync ios
       - name: Set up code signing
         script: |
-          # This tells Codemagic to fetch certificates automatically using the API key
+          # Fetch your certificates from Apple
           app-store-connect fetch-signing-files "$APP_ID" --create
           xcode-project use-profiles
       - name: Build iOS app
         script: |
+          # This command builds the app using the project file directly
+          # We add a small timeout/retry to ensure build settings are loaded
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" -showBuildSettings || true
+          
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME"
