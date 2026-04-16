@@ -18,42 +18,44 @@ workflows:
           npm run build
       - name: Re-create iOS folder with Manual Signing
         script: |
-          # 1. Start fresh
+          # 1. Start fresh to avoid state issues
           rm -rf ios
           
-          # 2. Create a Capacitor config to pre-set the Bundle ID
-          # This ensures the Xcode project is created with the right ID from the start
+          # 2. Pre-set Capacitor configuration
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           
+          # Run add command
           npx cap add ios
           
-          # 3. Force deployment target to 15.0
+          # 3. Force deployment target to 15.0 (Critical for Purchase plugin)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
+          # Run sync command
           npx cap sync ios
           
-          # 4. Fetch certificates and Profiles
+          # 4. Fetch certificates and Profiles from Apple
           app-store-connect fetch-signing-files "$APP_ID" --create
           
-          # 5. Extract Team ID from the profile we just downloaded
+          # 5. Extract Team ID accurately from the downloaded profile
           export TEAM_ID=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" -exec grep -aA1 "TeamIdentifier" {} + | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          echo "Extracted Team ID: $TEAM_ID"
+          echo "Using Team ID: $TEAM_ID"
           
-          # 6. Force the Project into Manual Signing mode
-          # We use a global search and replace to hit every instance of signing settings
+          # 6. HEAVY MANUAL SIGNING OVERRIDE
+          # This disables automatic signing and forces the team/profile for all configurations
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" {} +
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g" {} +
           
-          # 7. Apply profiles to the project
+          # 7. Final sync of profiles
           xcode-project use-profiles
       - name: Build iOS app
         script: |
-          # Build specifically for Release
+          # Removed the invalid --configuration flag
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME" \
-            --configuration Release
+            --scheme "$XCODE_SCHEME"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
