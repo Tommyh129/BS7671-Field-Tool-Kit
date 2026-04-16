@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       vars:
-        XCODE_WORKSPACE: "ios/App/App.xcworkspace" # Changed back to workspace for CocoaPods
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
       node: 22
@@ -16,13 +16,20 @@ workflows:
       - name: Build web app
         script: |
           npm run build
-      - name: Re-create iOS folder with CocoaPods
+      - name: Re-create iOS folder and Fix Deployment Target
         script: |
-          # We delete the folder and re-add it to ensure it uses CocoaPods, not SPM
+          # 1. Start with a fresh iOS folder
           rm -rf ios
-          npx cap add ios
+          npx cap add ios || true
           
-          # This forces Capacitor to generate a Podfile instead of using SPM
+          # 2. Force the Podfile to use iOS 15.0 (Required for Purchase Plugin)
+          sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
+          sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
+          
+          # 3. Force the Xcode Project to use iOS 15.0 globally
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
+          
+          # 4. Final sync (this runs the pod install correctly now)
           npx cap sync ios
       - name: Set up code signing
         script: |
