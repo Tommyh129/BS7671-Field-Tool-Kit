@@ -36,35 +36,36 @@ workflows:
           # 4. Fetch certificates and Profiles from Apple
           app-store-connect fetch-signing-files "$APP_ID" --create
           
-          # 5. Extract Team ID and Profile Name
-          export TEAM_ID=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" -exec grep -aA1 "TeamIdentifier" {} + | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          export PROFILE_NAME=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" -exec grep -aA1 "<key>Name</key>" {} + | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
+          # 5. Extract Team ID, Profile Name, and UUID accurately
+          # We pick the profile that Codemagic just downloaded
+          PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
+          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
+          export PROFILE_NAME=$(grep -aA1 "<key>Name</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
+          export PROFILE_UUID=$(grep -aA1 "<key>UUID</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           
           echo "Using Team ID: $TEAM_ID"
           echo "Using Profile Name: $PROFILE_NAME"
+          echo "Using Profile UUID: $PROFILE_UUID"
           
-          # 6. BRUTE FORCE SIGNING OVERRIDE (pbxproj)
-          # We use a script to ensure these keys exist and are set correctly
-          PROJECT_FILE="ios/App/App.xcodeproj/project.pbxproj"
-          
-          # Force Manual Signing Style
-          sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" "$PROJECT_FILE"
-          sed -i '' "s/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g" "$PROJECT_FILE"
-          
-          # Set the Team ID
-          sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" "$PROJECT_FILE"
-          
-          # Set the Profile Specifier (Profile Name) and Bundle ID
-          sed -i '' "s/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_NAME\";/g" "$PROJECT_FILE"
-          sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = $APP_ID;/g" "$PROJECT_FILE"
+          # 6. FORCE MANUAL SIGNING STYLE IN PROJECT
+          # This is critical to stop Xcode from trying to do Automatic Signing
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           
           # 7. Final sync of profiles
           xcode-project use-profiles
       - name: Build iOS app
         script: |
+          # We pass signing details as archive flags to override project settings during the build.
+          # We export the variables so they are available to the next step.
+          PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
+          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
+          export PROFILE_NAME=$(grep -aA1 "<key>Name</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
+          export PROFILE_UUID=$(grep -aA1 "<key>UUID</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
+
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME"
+            --scheme "$XCODE_SCHEME" \
+            --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=\"$PROFILE_UUID\" PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
