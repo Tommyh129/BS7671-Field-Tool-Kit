@@ -4,6 +4,8 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m1
     environment:
+      groups:
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -16,9 +18,9 @@ workflows:
       - name: Build web app
         script: |
           npm run build
-      - name: Re-create iOS folder with Manual Signing
+      - name: Re-create iOS folder and Set up Signing
         script: |
-          # 1. Start fresh to avoid state issues
+          # 1. Start fresh
           rm -rf ios
           
           # 2. Pre-set Capacitor configuration
@@ -26,46 +28,48 @@ workflows:
           
           npx cap add ios
           
-          # 3. Force deployment target to 15.0 (Critical for Purchase plugin)
+          # 3. Force deployment target to 15.0
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
           npx cap sync ios
           
-          # 4. Fetch certificates and Profiles from Apple
+          # 4. Fetch certificates and Profiles
           app-store-connect fetch-signing-files "$APP_ID" --create
           
-          # 5. Extract Team ID, Profile Name, and UUID accurately
-          # We pick the profile that Codemagic just downloaded
-          PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
+          # 5. Extract Details and Persist to Environment
+          # Fixed the path escaping for Codemagic's directory structure
+          PROFILE_PATH=$(ls "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision | head -1)
+          
+          if [ -z "$PROFILE_PATH" ]; then
+            echo "Error: No provisioning profile found. Check your App Store Connect API keys in Codemagic."
+            exit 1
+          fi
+
           export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           export PROFILE_NAME=$(grep -aA1 "<key>Name</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           export PROFILE_UUID=$(grep -aA1 "<key>UUID</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           
-          echo "Using Team ID: $TEAM_ID"
-          echo "Using Profile Name: $PROFILE_NAME"
-          echo "Using Profile UUID: $PROFILE_UUID"
+          # Persist these for the next script step using Codemagic's environment file
+          echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
+          echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
+          echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 6. FORCE MANUAL SIGNING STYLE IN PROJECT
-          # This is critical to stop Xcode from trying to do Automatic Signing
+          echo "Details found: Team=$TEAM_ID, Profile=$PROFILE_NAME"
+          
+          # 6. FORCE MANUAL SIGNING STYLE
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           
-          # 7. Final sync of profiles
+          # 7. Apply profiles
           xcode-project use-profiles
       - name: Build iOS app
         script: |
-          # We pass signing details as archive flags to override project settings during the build.
-          # We export the variables so they are available to the next step.
-          PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
-          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          export PROFILE_NAME=$(grep -aA1 "<key>Name</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          export PROFILE_UUID=$(grep -aA1 "<key>UUID</key>" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-
+          # Use the persisted environment variables in the build command
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME" \
-            --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=\"$PROFILE_UUID\" PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
+            --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
