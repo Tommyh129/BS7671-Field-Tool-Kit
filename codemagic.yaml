@@ -16,31 +16,37 @@ workflows:
       - name: Build web app
         script: |
           npm run build
-      - name: Re-create iOS folder and Fix Deployment Target
+      - name: Re-create iOS folder and Inject Signing
         script: |
+          # 1. Start fresh
           rm -rf ios
           npx cap add ios || true
           
-          # 1. Force deployment target to 15.0
+          # 2. Force deployment target to 15.0 for plugin compatibility
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 2. FORCE MANUAL SIGNING
-          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' {} +
+          npx cap sync ios
           
-          # 3. FORCE BUNDLE ID (This ensures it matches your App Store Connect ID)
+          # 3. FETCH SIGNING FILES (We do this early to extract the Team ID)
+          app-store-connect fetch-signing-files "$APP_ID" --create
+          
+          # 4. DOWNLOAD THE TEAM ID FROM THE PROFILE
+          # This finds your Apple Team ID (e.g., ABC123XYZ) from the profile we just downloaded
+          export TEAM_ID=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" -exec grep -aA1 "TeamIdentifier" {} + | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
+          echo "Extracted Team ID: $TEAM_ID"
+          
+          # 5. FORCE SETTINGS INTO XCODE
+          # Force Manual Signing, Set the extracted Team ID, and set the Bundle ID
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' {} +
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = $APP_ID;/g" {} +
           
-          npx cap sync ios
-      - name: Set up code signing
-        script: |
-          # Fetch certificates and profiles from Apple
-          app-store-connect fetch-signing-files "$APP_ID" --create
+          # 6. Final apply
           xcode-project use-profiles
       - name: Build iOS app
         script: |
-          # Build the .ipa file (Removed the invalid --bundle-id flag)
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
