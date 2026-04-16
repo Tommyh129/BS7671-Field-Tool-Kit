@@ -18,28 +18,29 @@ workflows:
           npm run build
       - name: Re-create iOS folder and Fix Deployment Target
         script: |
-          # 1. Start with a fresh iOS folder
           rm -rf ios
           npx cap add ios || true
           
-          # 2. Force the Podfile to use iOS 15.0 (Required for Purchase Plugin)
+          # 1. Force deployment target to 15.0
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
-          
-          # 3. Force the Xcode Project to use iOS 15.0 globally
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 4. Final sync (this runs the pod install correctly now)
+          # 2. FORCE MANUAL SIGNING (This fixes the "Requires a provisioning profile" error)
+          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' {} +
+          
           npx cap sync ios
       - name: Set up code signing
         script: |
+          # Fetch certificates and profiles from Apple
           app-store-connect fetch-signing-files "$APP_ID" --create
           xcode-project use-profiles
       - name: Build iOS app
         script: |
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME"
+            --scheme "$XCODE_SCHEME" \
+            --bundle-id "$APP_ID"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
