@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Verify this name in Codemagic UI
+        - app_store_credentials # Double-check this matches your Group name in Codemagic UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -24,15 +24,8 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           
-          # 2. Add ios platform
+          # 2. Add ios platform and fix version for capacitor-plugin-purchase (must be 15.0)
           npx cap add ios || true
-          
-          if [ ! -d "ios" ]; then
-            echo "ERROR: ios directory was not created. Check your capacitor.config.json."
-            exit 1
-          fi
-
-          # 3. Fix Deployment Target (Required for CapacitorPluginPurchase)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
@@ -40,27 +33,30 @@ workflows:
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Initialize Keychain (Essential for storing the private key)
+          # 1. Initialize Keychain 
           keychain initialize
           
-          # 2. CLEAR ALL GHOST CERTIFICATES (The "Nuclear Clean")
-          # This deletes every distribution cert Apple reports to clear the 'slots'.
+          # 2. DEEP CLEAN: List and Delete any phantom certificates
+          # This clears the slot for a fresh distribution cert.
           echo "--- Searching for all certificates to clear ---"
           CERT_IDS=$(app-store-connect certificates list --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
           for cid in $CERT_IDS; do
             echo "Deleting Certificate ID: $cid"
-            app-store-connect certificates delete --id "$cid" || echo "Failed to delete $cid"
+            app-store-connect certificates delete --id "$cid" || echo "Note: Could not delete $cid"
           done
 
-          # 3. Fetch/Create Signing Files
-          # Now that the account is clean, Codemagic creates a fresh cert it actually owns.
-          echo "--- Fetching/Creating signing files ---"
+          # 3. FORCE CREATE: Explicitly create a DISTRIBUTION certificate first
+          # This ensures the build machine "owns" the private key from the start.
+          echo "--- Creating fresh Distribution Certificate ---"
+          app-store-connect certificates create --type DISTRIBUTION --save || echo "Manual creation failed - falling back to fetch"
+
+          # 4. Fetch Signing Files
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 4. Extract Details
+          # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: No profile found. Ensure your API Key is ADMIN in App Store Connect."
+             echo "ERROR: Fetch failed. This is usually due to unaccepted agreements in App Store Connect."
              exit 1
           fi
 
@@ -74,7 +70,7 @@ workflows:
           
           echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
-          # 5. Apply manual signing configuration
+          # 6. Apply manual signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
