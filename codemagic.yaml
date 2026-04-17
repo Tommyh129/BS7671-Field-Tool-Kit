@@ -5,9 +5,9 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Ensure this matches your Group name in Codemagic UI
+        - app_store_credentials 
       vars:
-        TEAM_ID: "G5937UH83P" # Your verified Team ID
+        TEAM_ID: "G5937UH83P" 
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
@@ -33,28 +33,33 @@ workflows:
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Initialize Keychain
+          # 1. Initialize a Passwordless Keychain
           keychain initialize
           
-          # 2. NUCLEAR CLEAR: Find and Delete any "Ghost" certificates 
-          # This clears the slot so Codemagic can create a fresh one it actually owns.
-          echo "--- Searching for Ghost Certificates to Clear ---"
-          # We list all certs, and for each one found, we attempt to delete it.
-          # This solves the 'Cannot create resource without private key' error.
-          CERT_IDS=$(app-store-connect certificates list --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
-          for cid in $CERT_IDS; do
-            echo "Deleting Ghost Certificate: $cid"
-            app-store-connect certificates delete --id "$cid" || echo "Could not delete $cid"
-          done
-
-          # 3. Fetch/Create Signing Files
-          # Now that the 'slots' are 100% empty, this will succeed in creating a new one.
-          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
+          # 2. LIST ALL TYPES (Diagnostic)
+          echo "--- LISTING IOS_DISTRIBUTION ---"
+          app-store-connect certificates list --type IOS_DISTRIBUTION
           
-          # 4. Extract Profile Details
+          echo "--- LISTING DISTRIBUTION ---"
+          app-store-connect certificates list --type DISTRIBUTION
+
+          # 3. FORCE CREATE IOS_DISTRIBUTION
+          # This is the most reliable type for individual developers.
+          echo "--- Creating IOS_DISTRIBUTION ---"
+          app-store-connect certificates create --type IOS_DISTRIBUTION --save || echo "Creation failed, trying DISTRIBUTION..."
+          
+          # Fallback to general DISTRIBUTION
+          app-store-connect certificates create --type DISTRIBUTION --save || echo "All creation attempts finished."
+
+          # 4. Fetch Signing Files with legacy type support
+          app-store-connect fetch-signing-files "$APP_ID" \
+            --type IOS_APP_STORE \
+            --create
+          
+          # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Please double-check your App Store Connect License Agreements."
+             echo "ERROR: Profile fetch failed. If you see 'Cannot save' above, your API Key likely lacks ADMIN permissions."
              exit 1
           fi
 
@@ -64,7 +69,7 @@ workflows:
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 5. Apply signing configuration
+          # 6. Apply signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
