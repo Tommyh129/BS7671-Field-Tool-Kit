@@ -7,11 +7,11 @@ workflows:
       groups:
         - app_store_credentials 
       vars:
-        TEAM_ID: "G5937UH83P" 
+        TEAM_ID: "G5937UH83P" # Your verified Team ID from the logs
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
-      node: 22
+        node: 22
     scripts:
       - name: Install dependencies
         script: |
@@ -21,11 +21,12 @@ workflows:
           npm run build
       - name: Create Native Project & Fix Dependencies
         script: |
+          # 1. Start fresh
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
-          npx cap add ios || true
           
-          # Force 15.0 for capacitor-plugin-purchase compatibility
+          # 2. Add ios platform and fix version for capacitor-plugin-purchase (must be 15.0)
+          npx cap add ios || true
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
@@ -33,39 +34,41 @@ workflows:
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Initialize Keychain
+          # 1. Initialize a completely fresh Keychain
           keychain initialize
           
-          # 2. MANUAL KEY GENERATION (The Fix)
-          # We generate a private key using OpenSSL to bypass the tool's internal issues.
-          echo "--- Generating Private Key Manually ---"
-          openssl genrsa -out signing_key.key 2048
+          # 2. THE MANUAL HANDSHAKE (The Fix)
+          # We generate our own Private Key and CSR using OpenSSL.
+          # This bypasses the 'Cannot save' error by managing the key ourselves.
+          echo "--- Generating Manual Signing Key ---"
+          openssl genrsa -out local_signing_key.key 2048
+          openssl req -new -key local_signing_key.key -out request.csr -subj "/CN=Codemagic Signing"
           
-          # 3. CREATE CERTIFICATE (Injecting our Key)
-          # We use DISTRIBUTION as the type. This forces Apple to register our local key.
-          echo "--- Creating Certificate using Manual Key ---"
+          # 3. UPLOAD AND CREATE CERTIFICATE
+          # We explicitly feed our manual key to the Apple API.
+          echo "--- Creating Certificate at Apple ---"
+          # Using $(pwd) to ensure absolute path
+          KEY_PATH=$(pwd)/local_signing_key.key
           app-store-connect certificates create \
             --type DISTRIBUTION \
-            --certificate-key signing_key.key \
-            --save || echo "Certificate creation failed. Check if API key is ADMIN."
+            --certificate-key "$KEY_PATH" \
+            --save || echo "Certificate slot full or token invalid. Check Agreements!"
 
           # 4. FETCH SIGNING FILES
-          # Now that we have a certificate and its private key in the keychain, fetch will work.
-          echo "--- Fetching/Creating signing files ---"
+          # Now that we have a 'local' key that matches an Apple cert, fetch will succeed.
+          echo "--- Fetching Signing Files ---"
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Check your API Key permissions and Apple Portal agreements."
+             echo "ERROR: Fetch failed. This usually means you have unaccepted terms at developer.apple.com."
              exit 1
           fi
 
-          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           
-          echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
