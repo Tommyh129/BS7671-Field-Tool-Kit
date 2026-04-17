@@ -7,8 +7,7 @@ workflows:
       groups:
         - app_store_credentials 
       vars:
-        # REPLACE THIS with your 10-character Team ID from Step 1
-        TEAM_ID: "G5937UH83P"
+        TEAM_ID: "G5937UH83P" # Your Team ID from the logs
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
@@ -25,45 +24,49 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           npx cap add ios || true
+          
+          # Fix Deployment Target for capacitor-plugin-purchase
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
+          
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Start a fresh Keychain
+          # 1. Prepare Keychain
           keychain initialize
           
-          # 2. DIAGNOSTICS: Which Team is this Key using?
-          echo "--- LISTING BUNDLE IDS FOR THIS KEY ---"
-          app-store-connect bundle-ids list || echo "Unable to list bundle IDs."
+          # 2. DIAGNOSTICS: Check App Store Connect specifically
+          echo "--- Checking App Store Connect (My Apps) ---"
+          app-store-connect apps list | grep "$APP_ID" || echo "WARNING: App Record not found in App Store Connect. Distribution profiles require an App Record!"
 
-          # 3. Fetch/Create Signing Files
-          # We use the explicit Team ID to avoid the Personal/Organization confusion
-          app-store-connect fetch-signing-files "$APP_ID" \
-            --type IOS_APP_STORE \
-            --create
+          # 3. FORCE CREATE CERTIFICATE
+          # We try to create it explicitly to ensure the Private Key is stored locally
+          echo "--- Attempting to Create/Fetch Certificate ---"
+          app-store-connect certificates create --type APPLE_DISTRIBUTION --save || echo "Certificate already exists or creation failed."
+
+          # 4. Fetch/Create Signing Files
+          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 4. Extract Details
-          # We use a more aggressive search for the profile
+          # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Profile fetch failed. If this persists, delete the API Key and create a new one as ADMIN."
+             echo "ERROR: Fetch failed. This usually means the App Record is missing in App Store Connect."
              exit 1
           fi
 
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           
-          # We already have TEAM_ID from the environment variable above
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 5. Apply manual signing configuration
+          # 6. Apply signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
         script: |
+          # Manual Signing Build
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME" \
