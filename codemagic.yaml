@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Verify this name!
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -24,15 +24,8 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           
-          # 2. Add ios (fixed for Capacitor 6/7)
+          # 2. Add ios and fix Deployment Target (solves CapacitorPluginPurchase error)
           npx cap add ios || true
-          
-          if [ ! -d "ios" ]; then
-            echo "ERROR: ios folder not created."
-            exit 1
-          fi
-
-          # 3. Force Deployment Target (solves CapacitorPluginPurchase error)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
@@ -40,23 +33,15 @@ workflows:
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Initialize & Unlock Keychain
-          keychain initialize
-          
-          # 2. CLEAR DIAGNOSTICS: See every certificate Apple has
-          echo "--- LISTING ALL CERTIFICATES ---"
-          # No filter here - we want to see EVERYTHING blocking the account
-          app-store-connect certificates list || echo "Access Denied. Is the Key an Admin?"
-
-          # 3. Fetch/Create Signing Files
-          # If this step says 'Cannot save Signing Certificates', it means a cert from the list above 
-          # is already on Apple's servers. You MUST Revoke it.
+          # 1. Fetch/Create Signing Files
+          # This command will automatically generate a new certificate 
+          # IF you have revoked the old ones in the Apple portal.
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 4. Extract Details
+          # 2. Extract Details for the build step
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Check the 'LISTING ALL CERTIFICATES' section above."
+             echo "ERROR: Profile fetch failed. Did you Revoke the old certs at developer.apple.com?"
              exit 1
           fi
 
@@ -68,11 +53,12 @@ workflows:
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 5. Apply Signing Configuration
+          # 3. Apply manual signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
         script: |
+          # The IPA build
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME" \
