@@ -5,13 +5,12 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials 
+        - app_store_credentials # Verify this name in Codemagic UI
       vars:
-        TEAM_ID: "G5937UH83P" 
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
-        node: 22
+      node: 22
     scripts:
       - name: Install dependencies
         script: |
@@ -21,11 +20,19 @@ workflows:
           npm run build
       - name: Create Native Project & Fix Dependencies
         script: |
+          # 1. Start fresh
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
+          
+          # 2. Add ios platform
           npx cap add ios || true
           
-          # Force 15.0 for capacitor-plugin-purchase compatibility
+          if [ ! -d "ios" ]; then
+            echo "ERROR: ios directory was not created. Check your capacitor.config.json."
+            exit 1
+          fi
+
+          # 3. Fix Deployment Target (Required for CapacitorPluginPurchase)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
@@ -33,43 +40,41 @@ workflows:
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Initialize a Passwordless Keychain
+          # 1. Initialize Keychain (Essential for storing the private key)
           keychain initialize
           
-          # 2. LIST ALL TYPES (Diagnostic)
-          echo "--- LISTING IOS_DISTRIBUTION ---"
-          app-store-connect certificates list --type IOS_DISTRIBUTION
-          
-          echo "--- LISTING DISTRIBUTION ---"
-          app-store-connect certificates list --type DISTRIBUTION
+          # 2. CLEAR ALL GHOST CERTIFICATES (The "Nuclear Clean")
+          # This deletes every distribution cert Apple reports to clear the 'slots'.
+          echo "--- Searching for all certificates to clear ---"
+          CERT_IDS=$(app-store-connect certificates list --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
+          for cid in $CERT_IDS; do
+            echo "Deleting Certificate ID: $cid"
+            app-store-connect certificates delete --id "$cid" || echo "Failed to delete $cid"
+          done
 
-          # 3. FORCE CREATE IOS_DISTRIBUTION
-          # This is the most reliable type for individual developers.
-          echo "--- Creating IOS_DISTRIBUTION ---"
-          app-store-connect certificates create --type IOS_DISTRIBUTION --save || echo "Creation failed, trying DISTRIBUTION..."
+          # 3. Fetch/Create Signing Files
+          # Now that the account is clean, Codemagic creates a fresh cert it actually owns.
+          echo "--- Fetching/Creating signing files ---"
+          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # Fallback to general DISTRIBUTION
-          app-store-connect certificates create --type DISTRIBUTION --save || echo "All creation attempts finished."
-
-          # 4. Fetch Signing Files with legacy type support
-          app-store-connect fetch-signing-files "$APP_ID" \
-            --type IOS_APP_STORE \
-            --create
-          
-          # 5. Extract Profile Details
+          # 4. Extract Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Profile fetch failed. If you see 'Cannot save' above, your API Key likely lacks ADMIN permissions."
+             echo "ERROR: No profile found. Ensure your API Key is ADMIN in App Store Connect."
              exit 1
           fi
 
+          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           
+          echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 6. Apply signing configuration
+          echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
+          
+          # 5. Apply manual signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
