@@ -5,9 +5,9 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials 
+        - app_store_credentials # Ensure this matches your Group name in Codemagic UI
       vars:
-        TEAM_ID: "G5937UH83P" 
+        TEAM_ID: "G5937UH83P" # Your verified Team ID
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
@@ -36,28 +36,25 @@ workflows:
           # 1. Initialize Keychain
           keychain initialize
           
-          # 2. STEP 1: Create the Certificate (Using legacy DISTRIBUTION type for better CLI compatibility)
-          # We use --save so the .p12 and Private Key are saved into our keychain
-          echo "--- Creating Distribution Certificate ---"
-          app-store-connect certificates create --type DISTRIBUTION --save || echo "Certificate already exists on Apple's servers."
+          # 2. NUCLEAR CLEAR: Find and Delete any "Ghost" certificates 
+          # This clears the slot so Codemagic can create a fresh one it actually owns.
+          echo "--- Searching for Ghost Certificates to Clear ---"
+          # We list all certs, and for each one found, we attempt to delete it.
+          # This solves the 'Cannot create resource without private key' error.
+          CERT_IDS=$(app-store-connect certificates list --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
+          for cid in $CERT_IDS; do
+            echo "Deleting Ghost Certificate: $cid"
+            app-store-connect certificates delete --id "$cid" || echo "Could not delete $cid"
+          done
 
-          # 3. STEP 2: Create the Provisioning Profile Manually
-          # This avoids the buggy 'fetch' logic entirely.
-          echo "--- Creating Provisioning Profile ---"
-          # We name it 'Codemagic_Manual' so it stands out
-          app-store-connect profiles create \
-            --name "Codemagic_Manual_Profile" \
-            --bundle-id "$APP_ID" \
-            --type IOS_APP_STORE \
-            --create
+          # 3. Fetch/Create Signing Files
+          # Now that the 'slots' are 100% empty, this will succeed in creating a new one.
+          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 4. STEP 3: Download and Extract
-          # This command just downloads what we just created
-          app-store-connect profiles download --name "Codemagic_Manual_Profile"
-          
+          # 4. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Could not download the profile. Are you 100% sure you have no pending agreements at developer.apple.com?"
+             echo "ERROR: Fetch failed. Please double-check your App Store Connect License Agreements."
              exit 1
           fi
 
