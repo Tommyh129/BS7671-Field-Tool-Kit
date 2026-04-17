@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Ensure this matches your Group name in Codemagic UI
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -24,48 +24,53 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           
-          # 2. Add ios platform (It might fail on pod install, so we use || true)
-          # This ensures the folder is created even if pods fail initially.
+          # 2. Add ios and fix Deployment Target
           npx cap add ios || true
           
           if [ ! -d "ios" ]; then
-            echo "ERROR: ios directory was not created. Check your capacitor.config.json."
+            echo "ERROR: ios directory was not created."
             exit 1
           fi
 
-          # 3. Fix Deployment Target BEFORE sync
-          # This resolves the conflict with capacitor-plugin-purchase (requires 15.0)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 4. Now sync properly (This will now succeed)
           npx cap sync ios
       - name: Set up Signing
         script: |
           # 1. Initialize Keychain
           keychain initialize
           
-          # 2. Fetch/Create signing files
-          # Now that the App Record exists, this will create the profile
+          # 2. DIAGNOSTICS: Print exactly what Apple identifies
+          echo "--- APPS LIST ---"
+          app-store-connect apps list | grep "$APP_ID" || echo "App Record not found!"
+          
+          echo "--- CERTIFICATES LIST ---"
+          app-store-connect certificates list --type DISTRIBUTION || echo "No distribution certificates found."
+
+          # 3. Fetch/Create Signing Files
+          # If this step fails with 'Cannot save Signing Certificates', look at the list above.
+          # You MUST revoke the certificate ID shown in the list at developer.apple.com
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 3. Extract Details
+          # 4. Extract Details (Extremely robust extraction)
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: No profile found. Ensure your certificates slot is free (revoke old ones if needed)."
+             echo "ERROR: Provisioning profile fetch failed. Check your certificate slots."
              exit 1
           fi
 
           export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
-          export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
-          export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
+          export PROFILE_NAME=$(grep -aA1 "<key>Name</key>" "$PROFILE_PATH" | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
+          export PROFILE_UUID=$(grep -aA1 "<key>UUID</key>" "$PROFILE_PATH" | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           
+          echo "Persisting TEAM_ID=$TEAM_ID, PROFILE=$PROFILE_NAME ($PROFILE_UUID)"
           echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 4. Apply manual signing configuration
+          # 5. Apply manual signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
