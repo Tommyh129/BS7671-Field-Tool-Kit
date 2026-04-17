@@ -22,30 +22,34 @@ workflows:
         script: |
           # 1. Credentials Check
           if [ -z "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then
-            echo "ERROR: APP_STORE_CONNECT_PRIVATE_KEY is missing. Check Codemagic UI."
+            echo "ERROR: APP_STORE_CONNECT_PRIVATE_KEY is missing."
             exit 1
           fi
 
-          # 2. Reset Native Project (This is GOOD, it fixed your Pods!)
+          # 2. Reset Native Project (Corrects Pods)
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           npx cap add ios
           
-          # 3. Force Deployment Target to 15.0
+          # 3. Force Deployment Target
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
           npx cap sync ios
           
-          # 4. Fetch Signing Files
-          # We use --create to tell Codemagic to make a new cert if it has room
+          # 4. DEBUG: List Certificates
+          # This will tell us if the key can see your certificates and if there are too many
+          echo "--- Apple Certificate List ---"
+          app-store-connect certificates list || echo "Could not list certificates. Key might not be ADMIN."
+          
+          # 5. Fetch Signing Files
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 5. Extract Details
+          # 6. Extract Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-            echo "ERROR: No provisioning profile found. CHECK: Did you delete an old certificate to make room?"
+            echo "ERROR: No profile found. See the 'Apple Certificate List' above to diagnose."
             exit 1
           fi
 
@@ -57,7 +61,7 @@ workflows:
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 6. Force Manual Signing
+          # 7. Force Manual Signing
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
