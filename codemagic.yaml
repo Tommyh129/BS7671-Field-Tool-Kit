@@ -7,7 +7,7 @@ workflows:
       groups:
         - app_store_credentials 
       vars:
-        TEAM_ID: "G5937UH83P" # From your logs
+        TEAM_ID: "G5937UH83P" 
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
@@ -24,36 +24,40 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           npx cap add ios || true
+          
+          # Force 15.0 for capacitor-plugin-purchase compatibility
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
+          
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Force a completely fresh, unlocked Keychain
-          # This often fixes the "Cannot save" error if it was a local write permission issue
+          # 1. Initialize Keychain
           keychain initialize
           
-          # 2. DEEP SCAN: Let's find exactly what Apple thinks you have
-          echo "--- DEEP SCAN: All Certificates ---"
-          app-store-connect certificates list --json > certs.json
-          cat certs.json
-          
-          # 3. If the list is empty, we try to create a legacy IOS_DISTRIBUTION cert
-          # This type is more reliable for Individual accounts without Macs
-          echo "--- Attempting to create IOS_DISTRIBUTION ---"
-          app-store-connect certificates create --type IOS_DISTRIBUTION --save || echo "Creation attempt finished."
+          # 2. STEP 1: Create the Certificate (Using legacy DISTRIBUTION type for better CLI compatibility)
+          # We use --save so the .p12 and Private Key are saved into our keychain
+          echo "--- Creating Distribution Certificate ---"
+          app-store-connect certificates create --type DISTRIBUTION --save || echo "Certificate already exists on Apple's servers."
 
-          # 4. Fetch Signing Files using the specific Team ID and legacy type
-          # We use --create-if-missing
-          app-store-connect fetch-signing-files "$APP_ID" \
+          # 3. STEP 2: Create the Provisioning Profile Manually
+          # This avoids the buggy 'fetch' logic entirely.
+          echo "--- Creating Provisioning Profile ---"
+          # We name it 'Codemagic_Manual' so it stands out
+          app-store-connect profiles create \
+            --name "Codemagic_Manual_Profile" \
+            --bundle-id "$APP_ID" \
             --type IOS_APP_STORE \
             --create
           
-          # 5. Extract Profile Details
+          # 4. STEP 3: Download and Extract
+          # This command just downloads what we just created
+          app-store-connect profiles download --name "Codemagic_Manual_Profile"
+          
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Please check the JSON output above for any certificate IDs."
+             echo "ERROR: Could not download the profile. Are you 100% sure you have no pending agreements at developer.apple.com?"
              exit 1
           fi
 
@@ -63,7 +67,7 @@ workflows:
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 6. Apply signing configuration
+          # 5. Apply signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
