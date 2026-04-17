@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Verify this Group exists in Codemagic UI
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -20,36 +20,37 @@ workflows:
           npm run build
       - name: Re-create iOS folder and Set up Signing
         script: |
-          # 1. Start fresh (This FIXED your Pod conflicts in the last run!)
+          # 1. Reset Native Project
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
-          
-          # 2. Add ios and fix Deployment Target IMMEDIATELY
           npx cap add ios
+          
+          # 2. Fix Podfile (Deployment Target)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
-          
-          # 3. Sync plugins
           npx cap sync ios
           
-          # 4. DIAGNOSIS: List Apple Resources
-          echo "--- Registered Bundle IDs ---"
-          app-store-connect bundle-ids list --identifier "$APP_ID" || echo "Bundle ID not registered yet!"
+          # 3. DIAGNOSTICS: Let's see what this Key is actually connected to
+          echo "--- 1. API KEY PERMISSIONS CHECK ---"
+          app-store-connect certificates list || echo "Key cannot see certificates!"
           
-          echo "--- Existing Distribution Certificates ---"
-          app-store-connect certificates list --type DISTRIBUTION || echo "No Distribution certs found (or no access)."
+          echo "--- 2. REGISTERED APPS CHECK ---"
+          app-store-connect apps list | grep "$APP_ID" || echo "Key cannot find App with Bundle ID $APP_ID"
+          
+          echo "--- 3. BUNDLE IDS CHECK ---"
+          app-store-connect bundle-ids list | grep "$APP_ID" || echo "Key cannot find Identifier $APP_ID"
 
-          # 5. Fetch/Create Signing Files
-          # This command creates a Bundle ID, Certificate, and Profile if missing.
-          # It ONLY works if you have an Admin API Key and a free certificate slot.
+          # 4. Try Signing Fetch
+          # If this still fails, we will know WHY from the diagnostics above.
+          # We use --type IOS_APP_STORE specifically.
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 6. Extract Details
+          # 5. Extract Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-            echo "ERROR: No provisioning profile was created. Please Revoke an old Distribution certificate at developer.apple.com."
-            exit 1
+             echo "ERROR: Fetch failed. Please check the 'DIAGNOSTICS' output above in the logs."
+             exit 1
           fi
 
           export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
@@ -60,12 +61,10 @@ workflows:
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          # 7. Apply signing style
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
         script: |
-          # The IPA build will now use these explicit signing overrides
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME" \
