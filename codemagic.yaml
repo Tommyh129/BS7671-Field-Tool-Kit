@@ -7,7 +7,7 @@ workflows:
       groups:
         - app_store_credentials 
       vars:
-        TEAM_ID: "G5937UH83P" # Your Team ID from the logs
+        TEAM_ID: "G5937UH83P" # From your logs
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
@@ -24,34 +24,36 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           npx cap add ios || true
-          
-          # Fix Deployment Target for capacitor-plugin-purchase
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
-          
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Prepare Keychain
+          # 1. Force a completely fresh, unlocked Keychain
+          # This often fixes the "Cannot save" error if it was a local write permission issue
           keychain initialize
           
-          # 2. DIAGNOSTICS: Check App Store Connect specifically
-          echo "--- Checking App Store Connect (My Apps) ---"
-          app-store-connect apps list | grep "$APP_ID" || echo "WARNING: App Record not found in App Store Connect. Distribution profiles require an App Record!"
+          # 2. DEEP SCAN: Let's find exactly what Apple thinks you have
+          echo "--- DEEP SCAN: All Certificates ---"
+          app-store-connect certificates list --json > certs.json
+          cat certs.json
+          
+          # 3. If the list is empty, we try to create a legacy IOS_DISTRIBUTION cert
+          # This type is more reliable for Individual accounts without Macs
+          echo "--- Attempting to create IOS_DISTRIBUTION ---"
+          app-store-connect certificates create --type IOS_DISTRIBUTION --save || echo "Creation attempt finished."
 
-          # 3. FORCE CREATE CERTIFICATE
-          # We try to create it explicitly to ensure the Private Key is stored locally
-          echo "--- Attempting to Create/Fetch Certificate ---"
-          app-store-connect certificates create --type APPLE_DISTRIBUTION --save || echo "Certificate already exists or creation failed."
-
-          # 4. Fetch/Create Signing Files
-          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
+          # 4. Fetch Signing Files using the specific Team ID and legacy type
+          # We use --create-if-missing
+          app-store-connect fetch-signing-files "$APP_ID" \
+            --type IOS_APP_STORE \
+            --create
           
           # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. This usually means the App Record is missing in App Store Connect."
+             echo "ERROR: Fetch failed. Please check the JSON output above for any certificate IDs."
              exit 1
           fi
 
@@ -66,7 +68,6 @@ workflows:
           xcode-project use-profiles
       - name: Build iOS app
         script: |
-          # Manual Signing Build
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME" \
