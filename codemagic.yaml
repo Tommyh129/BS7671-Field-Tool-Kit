@@ -52,4 +52,5 @@
           
           # 7. Apply manual signing configuration to Xcode project
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
+          xcode-project use-profiles= Manual;/g" {} +
           xcode-project use-profiles
