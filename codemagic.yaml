@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Double-check this matches your Group name in Codemagic UI
+        - app_store_credentials # Double check this name in Codemagic UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -36,32 +36,28 @@ workflows:
           # 1. Initialize Keychain 
           keychain initialize
           
-          # 2. THE P12 INJECTION (The Fix)
-          # We force create a certificate and save it to a local .p12 file first.
-          # This bypasses the "Cannot save... without private key" error.
-          echo "--- Creating fresh Distribution Certificate as P12 ---"
+          # 2. THE FORCED HANDSHAKE (The Fix)
+          # We use OpenSSL to generate an RSA key locally. 
+          # We provide this key to the CLI so it doesn't try to generate one internally.
+          echo "--- Generating Manual Signing Key ---"
+          openssl genrsa -out signing.key 2048
+          
+          # 3. Create fresh distribution cert using our specific local key
+          echo "--- Creating fresh Distribution Certificate ---"
           app-store-connect certificates create \
             --type DISTRIBUTION \
-            --p12-path "$(pwd)/signing.p12" \
-            --p12-password "codemagic" \
-            --save || echo "Creation failed. Account might still have a hidden ghost cert."
-
-          # 3. Import the P12 we just made into the keychain
-          if [ -f "$(pwd)/signing.p12" ]; then
-            echo "--- Importing P12 into Keychain ---"
-            keychain add-certificates --path "$(pwd)/signing.p12" --p12-password "codemagic"
-          else
-            echo "--- Warning: P12 generation failed. Falling back to fetch. ---"
-          fi
+            --certificate-key "$(pwd)/signing.key" \
+            --save || echo "Creation failed. Account is likely in a 'locked' state."
 
           # 4. Fetch/Create Signing Files
-          # Now that we have a P12 locally, fetch will match the key to the profile.
+          # Now that we have a 'signing.key' file, fetch will be able to associate it.
+          echo "--- Fetching Provisioning Profiles ---"
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Check your API Key Role (must be Admin) and Portal agreements."
+             echo "ERROR: Fetch failed. This is 100% an API Key Identity issue."
              exit 1
           fi
 
@@ -72,8 +68,6 @@ workflows:
           echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
-          
-          echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
           # 6. Apply manual signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
