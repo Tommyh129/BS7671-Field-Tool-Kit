@@ -5,8 +5,9 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Double check this name in Codemagic UI
+        - app_store_credentials # Double-check this matches your Group name in Codemagic Settings
       vars:
+        TEAM_ID: "G5937UH83P" 
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
@@ -26,48 +27,51 @@ workflows:
           
           # 2. Add ios platform and fix version for capacitor-plugin-purchase (must be 15.0)
           npx cap add ios || true
-          sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
-          sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
+          
+          # Fix Podfile and Project version for deployment targets
+          find ios -name "Podfile" -exec sed -i '' "s/platform :ios, '1[0-4]\.[0-9]'/platform :ios, '15.0'/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Initialize Keychain 
-          keychain initialize
+          # 1. NORMALIZE PRIVATE KEY (Fixing formatting issues)
+          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
-          # 2. THE FORCED HANDSHAKE (The Fix)
-          # We use OpenSSL to generate an RSA key locally. 
-          # We provide this key to the CLI so it doesn't try to generate one internally.
-          echo "--- Generating Manual Signing Key ---"
-          openssl genrsa -out signing.key 2048
+          # 2. MANUAL KEYCHAIN SETUP (Bypassing CLI wrappers)
+          # We create a specific keychain called 'build.keychain' with password 'cm'
+          echo "--- Setting up Manual Keychain ---"
+          security create-keychain -p cm build.keychain
+          security list-keychains -d user -s build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p cm build.keychain
+          # Ensure apps can access items without popups
+          security set-keychain-settings -t 3600 -u build.keychain
           
-          # 3. Create fresh distribution cert using our specific local key
-          echo "--- Creating fresh Distribution Certificate ---"
-          app-store-connect certificates create \
-            --type DISTRIBUTION \
-            --certificate-key "$(pwd)/signing.key" \
-            --save || echo "Creation failed. Account is likely in a 'locked' state."
+          # 3. VERIFY ACCOUNT ACCESS
+          echo "--- Verifying Apple Account Access ---"
+          app-store-connect apps list | grep "$APP_ID" || (echo "ERROR: App ID $APP_ID not found. Check Role."; exit 1)
 
-          # 4. Fetch/Create Signing Files
-          # Now that we have a 'signing.key' file, fetch will be able to associate it.
-          echo "--- Fetching Provisioning Profiles ---"
+          # 4. FETCH AND CREATE SIGNING FILES
+          # We use --create to tell it to make the cert if it doesn't exist.
+          # The unlocked 'build.keychain' will now accept the private key.
+          echo "--- Fetching/Creating signing files ---"
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. This is 100% an API Key Identity issue."
+             echo "ERROR: No profile found. Check your API Key Role and Agreements at developer.apple.com."
              exit 1
           fi
 
-          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           
-          echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
+          
+          echo "Using Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
           # 6. Apply manual signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
