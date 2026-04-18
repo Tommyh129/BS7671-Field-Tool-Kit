@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Ensure variables match: APP_STORE_CONNECT_PRIVATE_KEY, etc.
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -33,12 +33,15 @@ workflows:
           fi
 
           # 3. Fix Deployment Target IMMEDIATELY
+          # This resolves conflicts with plugins like capacitor-plugin-purchase
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 4. Sync native project with RETRIES (Handles 504 errors)
+          # 4. Sync native project with RETRIES
+          # Sometimes external servers return 504. We retry up to 3 times.
           cd ios/App && pod repo update && cd ../..
+          
           MAX_RETRIES=3
           COUNT=0
           SUCCESS=false
@@ -61,20 +64,21 @@ workflows:
       - name: Set up Signing
         script: |
           set -e
-          # 1. NORMALIZE PRIVATE KEY
-          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo -e "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
+          # 1. NORMALIZE PRIVATE KEY (Fixing formatting issues)
+          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
-          # 2. INITIALIZE KEYCHAIN
+          # 2. KEYCHAIN INITIALIZATION
+          echo "--- Initializing Keychain ---"
           keychain initialize
           
-          # 3. GENERATE LOCAL SIGNING KEY (THE SURGICAL FIX)
-          # We generate our own RSA key to bypass the tool's internal generation bugs.
-          echo "--- Generating local signing key ---"
-          openssl genrsa -out cert_signing_key.pem 2048
+          # 3. VERIFY API KEY ACCESS
+          echo "--- Verifying API Key Permissions ---"
+          # This confirms the key can see the app. If it fails, check 'Access to Developer Resources'.
+          app-store-connect apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
           
           # 4. NUCLEAR CLEANUP
-          # Clear existing portal certs to ensure no conflicts.
-          echo "--- Wiping existing Certificates ---"
+          # Clear existing portal certs to avoid 'maximum number reached' errors.
+          echo "--- Cleaning Portal Certs ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
             for id in $CERT_IDS; do 
@@ -83,22 +87,23 @@ workflows:
             done
           done
           
-          # 5. CREATE CERTIFICATE MANUALLY WITH OUR KEY
-          # We pass our local key file path to the command to force its use.
-          echo "--- Creating fresh Distribution Certificate using local key ---"
-          app-store-connect certificates create \
-            --type DISTRIBUTION \
-            --certificate-key "$(pwd)/cert_signing_key.pem" \
-            --save
-          
-          # 6. FETCH SIGNING FILES
+          # 5. FETCH AND CREATE SIGNING FILES
+          # We use explicit directories to avoid the "Cannot save without private key" bug.
           echo "--- Fetching/Creating signing files ---"
-          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
+          mkdir -p "$HOME/signing-assets"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           
-          # 7. Extract Profile Details
+          app-store-connect fetch-signing-files "$APP_ID" \
+            --type IOS_APP_STORE \
+            --create \
+            --save \
+            --certificates-dir "$HOME/signing-assets" \
+            --profiles-dir "$HOME/Library/MobileDevice/Provisioning Profiles"
+          
+          # 6. Extract Profile Details for Build Step
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. This is usually due to missing 'Access to Certificates' in your User Profile in App Store Connect."
+             echo "ERROR: Fetch failed. This usually means your API Key is missing the 'Access to Certificates' checkbox in App Store Connect."
              exit 1
           fi
 
@@ -112,7 +117,7 @@ workflows:
           
           echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
-          # 8. Apply manual signing configuration
+          # 7. Apply manual signing configuration to Xcode project
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
