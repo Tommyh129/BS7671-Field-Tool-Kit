@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Double-check this group name in Codemagic Settings
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -38,9 +38,7 @@ workflows:
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
           # 4. Sync native project with RETRIES
-          # Sometimes GitHub or the Ionic CDN returns a 504. We retry up to 3 times.
           cd ios/App && pod repo update && cd ../..
-          
           MAX_RETRIES=3
           COUNT=0
           SUCCESS=false
@@ -62,40 +60,41 @@ workflows:
           fi
       - name: Set up Signing
         script: |
-          # 1. NORMALIZE PRIVATE KEY
-          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
+          set -e
+          # 1. NORMALIZE PRIVATE KEY (Ensures line breaks are correct)
+          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo -e "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
-          # 2. CLEANUP LOCAL STATE
+          # 2. INITIALIZE KEYCHAIN
+          keychain initialize
+          
+          # 3. CLEANUP LOCAL STATE
           rm -rf "$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           
-          # 3. MANUAL KEYCHAIN SETUP (Native macOS setup)
-          echo "--- Setting up Manual Keychain ---"
-          security create-keychain -p codemagic build.keychain
-          security list-keychains -d user -s build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p codemagic build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          
-          # 4. NUCLEAR CLEANUP (The fix for "Cannot save... without private key")
-          echo "--- Searching and Deleting Existing Certificates ---"
+          # 4. THE CLEAN SLATE (Nuclear Cleanup)
+          echo "--- Wiping existing Certificates ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
-            echo "Checking type: $type"
             CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
-            for id in $CERT_IDS; do
-              echo "Deleting existing certificate: $id"
-              app-store-connect certificates delete --id "$id" || echo "Failed to delete cert $id"
+            for id in $CERT_IDS; do 
+              echo "Attempting to delete certificate: $id"
+              app-store-connect certificates delete --id "$id" || true
             done
           done
-
-          # 5. FETCH/CREATE SIGNING FILES
+          
+          # 5. CREATE CERTIFICATE MANUALLY
+          # This generates the local key and saves it to the keychain automatically.
+          echo "--- Creating fresh Distribution Certificate ---"
+          app-store-connect certificates create --type DISTRIBUTION --save
+          
+          # 6. FETCH SIGNING FILES
+          # Now that the cert is generated and in the keychain, we download/create the profile.
           echo "--- Fetching/Creating signing files ---"
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 6. Extract Profile Details
+          # 7. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. This usually means your API Key is missing the 'Access to Certificates' checkbox in App Store Connect."
+             echo "ERROR: Fetch failed. Even as Account Holder, please verify that 'Access to Certificates, Identifiers & Profiles' is checked in your User Profile in App Store Connect."
              exit 1
           fi
 
@@ -109,7 +108,7 @@ workflows:
           
           echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
-          # 7. Apply manual signing configuration
+          # 8. Apply manual signing configuration
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
