@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Ensure this matches your Group name in Codemagic UI
+        - app_store_credentials # Double-check this matches your Group name in Codemagic settings
       vars:
         TEAM_ID: "G5937UH83P" 
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
@@ -25,45 +25,42 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           
-          # 2. Add ios and fix versions for capacitor-plugin-purchase (must be 15.0)
+          # 2. Add ios platform and fix version for capacitor-plugin-purchase (must be 15.0)
           npx cap add ios || true
+          
+          # Fix Podfile and Project version
           find ios -name "Podfile" -exec sed -i '' "s/platform :ios, '1[0-4]\.[0-9]'/platform :ios, '15.0'/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. Initialize Keychain
+          # 1. Normalize line endings for the private key 
+          # (Common fix for "Cannot save" error if the key was pasted as a single line)
+          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
+          
+          # 2. Initialize Keychain
           keychain initialize
           
-          # 2. NUCLEAR CLEAR: Delete any "Ghost" certificates found by ID
-          # This forces a clean slot for Codemagic to own.
-          echo "--- Searching for all certificates to clear ---"
-          CERT_IDS=$(app-store-connect certificates list --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
-          for cid in $CERT_IDS; do
-            echo "Deleting Certificate ID: $cid"
-            app-store-connect certificates delete --id "$cid" || echo "Note: Already deleted or restricted."
-          done
+          # 3. DIAGNOSTICS: Check if any profiles already exist for this bundle ID
+          echo "--- Checking Existing Profiles ---"
+          app-store-connect profiles list --bundle-id "$APP_ID" || echo "No profiles found."
 
-          # 3. FORCE CREATE: Explicitly create a DISTRIBUTION certificate
-          # Using $(pwd) ensures the path is absolute for the internal tools
-          echo "--- Creating fresh Distribution Certificate ---"
-          app-store-connect certificates create --type DISTRIBUTION --save || echo "Creation failed - check API Key Role"
-
-          # 4. Fetch Signing Files
+          # 4. FETCH/CREATE SIGNING FILES
+          # We use the most robust command. Since you have no certs, it will try to create one.
+          echo "--- Fetching/Creating signing files ---"
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Check your API Key Role and Agreements at developer.apple.com."
+             echo "ERROR: Fetch failed. This is 100% an account issue. Check Agreements and Key Role."
              exit 1
           fi
 
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           
-          echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
@@ -78,3 +75,7 @@ workflows:
             --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
     artifacts:
       - build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - tommyholm97@gmail.com
