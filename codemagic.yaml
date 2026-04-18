@@ -1,63 +1,18 @@
-workflows:
-  ios-workflow:
-    name: iOS Build Workflow
-    max_build_duration: 60
-    instance_type: mac_mini_m1
-    environment:
-      groups:
-        - app_store_credentials
-      vars:
-        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
-        XCODE_SCHEME: "App"
-        APP_ID: "com.bs7671.fieldtoolkit"
-      node: 22
-    scripts:
-      - name: Install dependencies
-        script: |
-          npm install
-      - name: Build web app
-        script: |
-          npm run build
-      - name: Create Native Project & Fix Dependencies
+- name: Set up Signing
         script: |
           set -e
-          rm -rf ios
-          echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
-          npx cap add ios || true
-          if [ ! -d "ios" ]; then
-            echo "ERROR: ios directory was not created."
-            exit 1
-          fi
-          sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
-          sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
-          find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
-          cd ios/App && pod repo update && cd ../..
-          MAX_RETRIES=3
-          COUNT=0
-          SUCCESS=false
-          while [ $COUNT -lt $MAX_RETRIES ]; do
-            COUNT=$((COUNT+1))
-            echo "Attempting Capacitor Sync (Attempt $COUNT of $MAX_RETRIES)..."
-            if npx cap sync ios; then
-              SUCCESS=true
-              break
-            else
-              echo "Sync failed. Waiting 15 seconds before retry..."
-              sleep 15
-            fi
-          done
-          if [ "$SUCCESS" = false ]; then
-            echo "ERROR: Capacitor sync failed after $MAX_RETRIES attempts."
-            exit 1
-          fi
-      - name: Set up Signing
-        script: |
-          set -e
+          # 1. NORMALIZE PRIVATE KEY (Fixing formatting issues)
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
+          
+          # 2. KEYCHAIN INITIALIZATION
           echo "--- Initializing Keychain ---"
           keychain initialize
+          
+          # 3. VERIFY API KEY ACCESS
           echo "--- Verifying API Key Permissions ---"
-          app-store-connect apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID."; exit 1)
+          app-store-connect apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
+          
+          # 4. NUCLEAR CLEANUP
           echo "--- Cleaning Portal Certs ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
@@ -66,34 +21,44 @@ workflows:
               app-store-connect certificates delete --id "$id" || true
             done
           done
-          echo "--- Fetching/Creating signing files ---"
+          
+          # 5. CREATE CERTIFICATE AND EXPORT P12
+          # We force a P12 export to ensure the private key is captured.
+          echo "--- Creating fresh Distribution Certificate as P12 ---"
+          app-store-connect certificates create \
+            --type DISTRIBUTION \
+            --p12-path /tmp/cert.p12 \
+            --p12-password codemagic \
+            --save
+          
+          # 6. IMPORT P12 INTO KEYCHAIN
+          echo "--- Importing P12 into Keychain ---"
+          keychain add-certificates --p12 /tmp/cert.p12 --p12-password codemagic
+          
+          # 7. FETCH SIGNING FILES
+          echo "--- Fetching provisioning profiles ---"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           app-store-connect fetch-signing-files "$APP_ID" \
             --type IOS_APP_STORE \
-            --create \
             --profiles-dir "$HOME/Library/MobileDevice/Provisioning Profiles"
+          
+          # 8. Extract Profile Details for Build Step
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Check agreements and permissions."
+             echo "ERROR: Fetch failed. Check your API Key permissions and Portal agreements."
              exit 1
           fi
+
           export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
+          
           echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
+          
+          echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
+          
+          # 9. Apply manual signing configuration to Xcode project
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
-      - name: Build iOS app
-        script: |
-          xcode-project build-ipa \
-            --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME" \
-            --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
-    artifacts:
-      - build/ios/ipa/*.ipa
-    publishing:
-      email:
-        recipients:
-          - tommyholm97@gmail.com
