@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Ensure this matches your Group name in Codemagic Settings
+        - app_store_credentials # Double-check this group name in Codemagic Settings
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -32,13 +32,34 @@ workflows:
             exit 1
           fi
 
-          # 3. Fix Deployment Target (Resolves capacitor-plugin-purchase conflict)
+          # 3. Fix Deployment Target IMMEDIATELY
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 4. Sync native project
-          npx cap sync ios
+          # 4. Sync native project with RETRIES
+          # Sometimes GitHub or the Ionic CDN returns a 504. We retry up to 3 times.
+          cd ios/App && pod repo update && cd ../..
+          
+          MAX_RETRIES=3
+          COUNT=0
+          SUCCESS=false
+          while [ $COUNT -lt $MAX_RETRIES ]; do
+            COUNT=$((COUNT+1))
+            echo "Attempting Capacitor Sync (Attempt $COUNT of $MAX_RETRIES)..."
+            if npx cap sync ios; then
+              SUCCESS=true
+              break
+            else
+              echo "Sync failed. Waiting 15 seconds before retry..."
+              sleep 15
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "ERROR: Capacitor sync failed after $MAX_RETRIES attempts."
+            exit 1
+          fi
       - name: Set up Signing
         script: |
           # 1. NORMALIZE PRIVATE KEY
@@ -57,21 +78,18 @@ workflows:
           security set-keychain-settings -t 3600 -u build.keychain
           
           # 4. NUCLEAR CLEANUP (The fix for "Cannot save... without private key")
-          # We MUST delete any existing certificates so the tool can create a fresh one 
-          # on this machine. If it tries to use an existing one, it fails because it lacks the key.
           echo "--- Searching and Deleting Existing Certificates ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             echo "Checking type: $type"
             CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
             for id in $CERT_IDS; do
               echo "Deleting existing certificate: $id"
-              app-store-connect certificates delete --id "$id" || echo "Failed to delete cert $id (might be managed by Xcode)"
+              app-store-connect certificates delete --id "$id" || echo "Failed to delete cert $id"
             done
           done
 
           # 5. FETCH/CREATE SIGNING FILES
           echo "--- Fetching/Creating signing files ---"
-          # With the portal cleared, this will now create a NEW cert and NEW profile.
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           # 6. Extract Profile Details
@@ -96,7 +114,6 @@ workflows:
           xcode-project use-profiles
       - name: Build iOS app
         script: |
-          # Use the persisted environment variables in the build command
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME" \
