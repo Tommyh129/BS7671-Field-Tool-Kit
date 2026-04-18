@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Ensure this matches your Environment Group name in Codemagic
+        - app_store_credentials # Double-check this matches your Group name in Codemagic UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -24,47 +24,44 @@ workflows:
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           
-          # 2. Add ios platform
+          # 2. Add ios platform and fix version for capacitor-plugin-purchase (must be 15.0)
           npx cap add ios || true
-          
-          if [ ! -d "ios" ]; then
-            echo "ERROR: ios directory was not created. Check your capacitor.config.json."
-            exit 1
-          fi
-
-          # 3. Fix Deployment Target
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 4. Sync native project
           npx cap sync ios
       - name: Set up Signing
         script: |
-          # 1. NORMALIZE PRIVATE KEY (Fixes formatting issues)
-          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
+          # 1. Initialize Keychain 
+          keychain initialize
           
-          # 2. MANUAL KEYCHAIN SETUP (Native macOS setup)
-          echo "--- Setting up Manual Keychain ---"
-          security create-keychain -p codemagic build.keychain
-          security list-keychains -d user -s build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p codemagic build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          
-          # 3. VERIFY ACCOUNT ACCESS
-          echo "--- Verifying Apple Account Access ---"
-          app-store-connect apps list| grep "$APP_ID" || (echo "ERROR: API Key cannot see app $APP_ID. Check Role (Admin required)."; exit 1)
+          # 2. THE P12 INJECTION (The Fix)
+          # We force create a certificate and save it to a local .p12 file first.
+          # This bypasses the "Cannot save... without private key" error.
+          echo "--- Creating fresh Distribution Certificate as P12 ---"
+          app-store-connect certificates create \
+            --type DISTRIBUTION \
+            --p12-path "$(pwd)/signing.p12" \
+            --p12-password "codemagic" \
+            --save || echo "Creation failed. Account might still have a hidden ghost cert."
 
-          # 4. FETCH/CREATE SIGNING FILES
-          echo "--- Fetching/Creating signing files ---"
-          # The unlocked keychain 'build.keychain' will now accept the new key.
+          # 3. Import the P12 we just made into the keychain
+          if [ -f "$(pwd)/signing.p12" ]; then
+            echo "--- Importing P12 into Keychain ---"
+            keychain add-certificates --path "$(pwd)/signing.p12" --p12-password "codemagic"
+          else
+            echo "--- Warning: P12 generation failed. Falling back to fetch. ---"
+          fi
+
+          # 4. Fetch/Create Signing Files
+          # Now that we have a P12 locally, fetch will match the key to the profile.
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           # 5. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: No profile found. Ensure your API Key is ADMIN."
+             echo "ERROR: Fetch failed. Check your API Key Role (must be Admin) and Portal agreements."
              exit 1
           fi
 
