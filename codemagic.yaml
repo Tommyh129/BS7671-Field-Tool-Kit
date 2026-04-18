@@ -50,14 +50,21 @@ workflows:
             echo "ERROR: Capacitor sync failed after $MAX_RETRIES attempts."
             exit 1
           fi
-      - name: Set up Signing
+- name: Set up Signing
         script: |
           set -e
+          # 1. NORMALIZE PRIVATE KEY (Fixing formatting)
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
+          
+          # 2. KEYCHAIN INITIALIZATION
           echo "--- Initializing Keychain ---"
           keychain initialize
+          
+          # 3. VERIFY API KEY ACCESS
           echo "--- Verifying API Key Permissions ---"
-          app-store-connect apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID."; exit 1)
+          app-store-connect apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
+          
+          # 4. NUCLEAR CLEANUP
           echo "--- Cleaning Portal Certs ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
@@ -66,14 +73,34 @@ workflows:
               app-store-connect certificates delete --id "$id" || true
             done
           done
-          echo "--- Creating fresh Distribution Certificate as P12 ---"
-          app-store-connect certificates create \
-            --type DISTRIBUTION \
-            --p12-path /tmp/cert.p12 \
-            --p12-password codemagic \
-            --save
+          sleep 5
+          
+          # 5. SURGICAL MANUAL P12 PAIRING
+          # This bypasses the CLI tool's internal key generation which is failing.
+          echo "--- Generating Manual CSR ---"
+          openssl genrsa -out /tmp/key.pem 2048
+          openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
+          
+          echo "--- Uploading CSR to Apple ---"
+          # Omit --save to avoid the tool's internal store logic.
+          CERT_ID=$(app-store-connect certificates create --type DISTRIBUTION --csr-path /tmp/cert.csr --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4 | head -1)
+          
+          if [ -z "$CERT_ID" ]; then
+            echo "ERROR: Certificate creation failed. Check App Store Connect agreements and ensured you are an Account Holder."
+            exit 1
+          fi
+          
+          echo "--- Downloading Certificate (ID: $CERT_ID) ---"
+          app-store-connect certificates download --id "$CERT_ID" --path /tmp/cert.cer
+          
+          echo "--- Packaging P12 ---"
+          openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
+          openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
+          
           echo "--- Importing P12 into Keychain ---"
           keychain add-certificates --p12 /tmp/cert.p12 --p12-password codemagic
+          
+          # 6. FETCH PROVISIONING PROFILES
           echo "--- Fetching provisioning profiles ---"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           app-store-connect fetch-signing-files "$APP_ID" \
