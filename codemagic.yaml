@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials 
+        - app_store_credentials # Ensure variables match: APP_STORE_CONNECT_PRIVATE_KEY, etc.
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -37,7 +37,7 @@ workflows:
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # 4. Sync native project with RETRIES
+          # 4. Sync native project with RETRIES (Handles 504 errors)
           cd ios/App && pod repo update && cd ../..
           MAX_RETRIES=3
           COUNT=0
@@ -61,40 +61,44 @@ workflows:
       - name: Set up Signing
         script: |
           set -e
-          # 1. NORMALIZE PRIVATE KEY (Ensures line breaks are correct)
+          # 1. NORMALIZE PRIVATE KEY
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo -e "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
           # 2. INITIALIZE KEYCHAIN
           keychain initialize
           
-          # 3. CLEANUP LOCAL STATE
-          rm -rf "$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          # 3. GENERATE LOCAL SIGNING KEY (THE SURGICAL FIX)
+          # We generate our own RSA key to bypass the tool's internal generation bugs.
+          echo "--- Generating local signing key ---"
+          openssl genrsa -out cert_signing_key.pem 2048
           
-          # 4. THE CLEAN SLATE (Nuclear Cleanup)
+          # 4. NUCLEAR CLEANUP
+          # Clear existing portal certs to ensure no conflicts.
           echo "--- Wiping existing Certificates ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
             for id in $CERT_IDS; do 
-              echo "Attempting to delete certificate: $id"
+              echo "Deleting cert: $id"
               app-store-connect certificates delete --id "$id" || true
             done
           done
           
-          # 5. CREATE CERTIFICATE MANUALLY
-          # This generates the local key and saves it to the keychain automatically.
-          echo "--- Creating fresh Distribution Certificate ---"
-          app-store-connect certificates create --type DISTRIBUTION --save
+          # 5. CREATE CERTIFICATE MANUALLY WITH OUR KEY
+          # We pass our local key file path to the command to force its use.
+          echo "--- Creating fresh Distribution Certificate using local key ---"
+          app-store-connect certificates create \
+            --type DISTRIBUTION \
+            --certificate-key "$(pwd)/cert_signing_key.pem" \
+            --save
           
           # 6. FETCH SIGNING FILES
-          # Now that the cert is generated and in the keychain, we download/create the profile.
           echo "--- Fetching/Creating signing files ---"
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           # 7. Extract Profile Details
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Even as Account Holder, please verify that 'Access to Certificates, Identifiers & Profiles' is checked in your User Profile in App Store Connect."
+             echo "ERROR: Fetch failed. This is usually due to missing 'Access to Certificates' in your User Profile in App Store Connect."
              exit 1
           fi
 
