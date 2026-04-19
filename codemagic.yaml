@@ -28,9 +28,9 @@ workflows:
             echo "ERROR: ios directory was not created."
             exit 1
           fi
-          # Ensuring M1 compatibility and deployment targets
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
+          # Ensure M1 Silicon compatibility
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           cd ios/App && pod repo update && cd ../..
           
@@ -55,30 +55,21 @@ workflows:
       - name: Set up Signing
         script: |
           set -e
-          # 0. UPGRADE CLI TOOLS (Crucial for --certificate-signing-request support)
+          # 1. UPGRADE & PATH SETUP
           echo "--- Upgrading Codemagic CLI Tools ---"
           pip3 install --upgrade codemagic-cli-tools
           hash -r
-          
-          # Force the use of the upgraded binary
           APP_STORE_CONNECT_BIN=$(dirname $(which python3))/app-store-connect
           echo "Using App Store Connect CLI at: $APP_STORE_CONNECT_BIN"
           $APP_STORE_CONNECT_BIN --version
           
-          # 1. NORMALIZE PRIVATE KEY
-          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
-          
-          # 2. KEYCHAIN INITIALIZATION
+          # 2. KEYCHAIN & AUTH
           echo "--- Initializing Keychain ---"
           keychain initialize
+          export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
-          # 3. VERIFY API KEY ACCESS
-          echo "--- Verifying API Key Permissions ---"
-          $APP_STORE_CONNECT_BIN apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
-          
-          # 4. NUCLEAR CLEANUP (Wipe Portal for fresh start)
-          echo "--- Cleaning Portal Certs ---"
-          # Using Python for robust JSON parsing
+          # 3. PORTAL CLEANUP (Fresh start to avoid quota limits)
+          echo "--- Cleaning Old Distribution Certificates ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             CERT_IDS=$($APP_STORE_CONNECT_BIN certificates list --type "$type" --json | python3 -c "import sys, json; data = json.load(sys.stdin); print('\n'.join([d['id'] for d in data]))" || echo "")
             for id in $CERT_IDS; do 
@@ -86,50 +77,33 @@ workflows:
               $APP_STORE_CONNECT_BIN certificates delete --id "$id" || true
             done
           done
-          sleep 5
+          sleep 3
           
-          # 5. SURGICAL MANUAL P12 PAIRING
-          echo "--- Generating Manual CSR ---"
-          openssl genrsa -out /tmp/key.pem 2048
-          openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
+          # 4. NATIVE CERTIFICATE CREATION
+          echo "--- Generating Fresh Distribution Certificate ---"
+          # Native flow: CLI generates key and imports results to the active keychain automatically.
+          # We avoid manual CSR flags which were causing "unrecognized arguments" errors.
+          $APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --json > /tmp/cert_res.json
+          cat /tmp/cert_res.json
           
-          echo "--- Uploading CSR to Apple ---"
-          # Valid flag in CLI 0.64.0 is exactly --certificate-signing-request
-          CREATE_OUTPUT=$($APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --certificate-signing-request /tmp/cert.csr --json)
-          echo "$CREATE_OUTPUT"
-          
-          # Extract the Certificate ID
-          CERT_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
-          
-          if [ -z "$CERT_ID" ]; then
-            echo "ERROR: Certificate creation failed. Output was: $CREATE_OUTPUT"
-            exit 1
-          fi
-          
-          echo "--- Downloading Certificate (ID: $CERT_ID) ---"
-          $APP_STORE_CONNECT_BIN certificates download --id "$CERT_ID" --path /tmp/cert.cer
-          
-          echo "--- Packaging P12 Bundle ---"
-          openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
-          openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
-          
-          echo "--- Importing P12 into Keychain ---"
-          keychain add-certificates --p12 /tmp/cert.p12 --p12-password codemagic
-          
-          # 6. FETCH PROVISIONING PROFILES
-          echo "--- Fetching provisioning profiles ---"
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          # 5. FETCH & AUTO-REPAIR PROFILES
+          echo "--- Fetching & Updating Provisioning Profiles ---"
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          rm -rf "$PROFILES_DIR"
+          mkdir -p "$PROFILES_DIR"
+          # The --create flag ensures Apple generates/updates profiles for our new certificate.
           $APP_STORE_CONNECT_BIN fetch-signing-files "$APP_ID" \
             --type IOS_APP_STORE \
-            --profiles-dir "$HOME/Library/MobileDevice/Provisioning Profiles"
+            --profiles-dir "$PROFILES_DIR" \
+            --create
           
-          # 7. Extract Profile Details for Build Step
-          PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
+          # 6. EXTRACT SIGNING DETAILS
+          PROFILE_PATH=$(find "$PROFILES_DIR" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Check device list in portal."
+             echo "ERROR: Signing profile fetch failed. Check App ID $APP_ID permissions."
              exit 1
           fi
-
+          
           export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep "<string>" | sed -e 's/<string>//' -e 's/<\/string>//' | head -1 | xargs)
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" -A1 | grep "<string>" | head -1 | sed -e 's/<string>//' -e 's/<\/string>//' | xargs)
@@ -138,9 +112,9 @@ workflows:
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
+          echo "Exported Details: Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
-          # 8. Force Manual Signing in Xcode
+          # 7. XCODE SYNC
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
