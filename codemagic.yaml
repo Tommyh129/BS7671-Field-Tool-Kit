@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Ensure variables are set here
+        - app_store_credentials # Set these in the Codemagic UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -99,21 +99,22 @@ workflows:
                   issuer_id = os.environ.get('APP_STORE_CONNECT_ISSUER_ID')
                   key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID')
                   raw_key = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY', '')
-                  # Fix potential double escape issues
                   private_key = raw_key.replace('\\\\n', '\n').replace('\\n', '\n')
                   
                   if not issuer_id or not key_id or not private_key:
                       print("ERROR: Missing credentials")
                       sys.exit(1)
                       
-                  # JWT setup
+                  # JWT setup for App Store Connect API
                   header = {'alg': 'ES256', 'kid': str(key_id), 'typ': 'JWT'}
                   payload = {'iss': issuer_id, 'exp': int(time.time()) + 1200, 'aud': 'appstoreconnect-v1'}
                   token = jwt.encode(payload, private_key, algorithm='ES256', headers=header)
-                  token_str = token.decode('utf-8') if isinstance(token, bytes) else token
-                  headers = {"Authorization": f"Bearer {token_str}"}
+                  if isinstance(token, bytes):
+                      token = token.decode('utf-8')
                   
-                  # Cleanup
+                  headers = {"Authorization": f"Bearer {token}"}
+                  
+                  # Cleanup old Distribution Certificates to stay under Apple's quota
                   print("Cleaning up old certificates...")
                   resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=20", headers=headers)
                   if resp.status_code == 200:
@@ -122,7 +123,7 @@ workflows:
                           print(f"Deleting cert: {cid}")
                           requests.delete(f"https://api.appstoreconnect.apple.com/v1/certificates/{cid}", headers=headers)
                   
-                  # Create new
+                  # Create a fresh Distribution Certificate
                   print("Creating new certificate...")
                   with open('/tmp/cert.csr', 'r') as f:
                       csr_content = "".join([line.strip() for line in f.readlines() if "CERTIFICATE REQUEST" not in line])
@@ -154,11 +155,19 @@ workflows:
           # 4. KEYCHAIN IMPORT
           echo "--- Packaging & Importing P12 ---"
           openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
+          
+          # Use -legacy flag for OpenSSL 3.0+ compatibility with macOS Keychain
+          openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution" -legacy || \
           openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
           
-          # Import into the default keychain created by Codemagic
-          # -A allows all apps to access (essential for non-interactive codesigning)
-          security import /tmp/cert.p12 -P "codemagic" -A
+          # Find the specific keychain initialized by Codemagic
+          KC_PATH=$(ls ~/Library/codemagic-cli-tools/keychains/*.keychain-db | head -1)
+          
+          # Import with explicit targeting and pre-authorization for codesigning
+          security import /tmp/cert.p12 -k "$KC_PATH" -P "codemagic" -A -T /usr/bin/codesign -T /usr/bin/productsign
+          
+          # Authorize signing tools to access the private key without prompt
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "codemagic" "$KC_PATH" > /dev/null 2>&1 || true
           
           # 5. FETCH & AUTO-REPAIR PROFILES
           echo "--- Fetching Provisioning Profiles ---"
@@ -188,7 +197,7 @@ workflows:
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
           echo "--- Finalizing Project Configuration ---"
-          # FORCE Team ID and Bundle ID into the project file
+          # Surcharge Xcode values to match our managed identities
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = $APP_ID;/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
