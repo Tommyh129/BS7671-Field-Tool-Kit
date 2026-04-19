@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Set these in the Codemagic UI
+        - app_store_credentials # Set variables in Codemagic UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -114,9 +114,9 @@ workflows:
                   
                   headers = {"Authorization": f"Bearer {token}"}
                   
-                  # Cleanup old Distribution Certificates to stay under Apple's quota
+                  # Cleanup old Distribution Certificates
                   print("Cleaning up old certificates...")
-                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=20", headers=headers)
+                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=100", headers=headers)
                   if resp.status_code == 200:
                       for cert in resp.json().get('data', []):
                           cid = cert['id']
@@ -142,6 +142,9 @@ workflows:
                   with open('/tmp/cert.id', 'w') as f: f.write(cid)
                   with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(content))
                   print(f"Successfully created certificate: {cid}")
+                  
+                  # Small sleep to let Apple propagate the certificate before fetching profiles
+                  time.sleep(5)
                   
               except Exception as e:
                   print(f"Fatal Exception: {str(e)}")
@@ -170,11 +173,16 @@ workflows:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "codemagic" "$KC_PATH" > /dev/null 2>&1 || true
           
           # 5. FETCH & AUTO-REPAIR PROFILES
-          echo "--- Fetching Provisioning Profiles ---"
+          echo "--- Fetching & Updating Provisioning Profiles ---"
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           rm -rf "$PROFILES_DIR"
           mkdir -p "$PROFILES_DIR"
-          $APP_STORE_CONNECT_BIN fetch-signing-files "$APP_ID" --type IOS_APP_STORE --profiles-dir "$PROFILES_DIR" --create
+          # Provide the --certificate-key to avoid "Cannot save Signing Certificates" error.
+          $APP_STORE_CONNECT_BIN fetch-signing-files "$APP_ID" \
+            --type IOS_APP_STORE \
+            --profiles-dir "$PROFILES_DIR" \
+            --certificate-key /tmp/key.pem \
+            --create
           
           # 6. EXTRACT SIGNING DETAILS & PATCH PROJECT
           PROFILE_PATH=$(find "$PROFILES_DIR" -name "*.mobileprovision" | head -1)
