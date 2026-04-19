@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials 
+        - app_store_credentials # Set this up in Codemagic UI later
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -77,26 +77,69 @@ workflows:
           done
           sleep 3
           
-          # 4. SURGICAL CERTIFICATE CREATION
-          echo "--- Generating Manual CSR & Key ---"
+          # 4. ROBUST CERTIFICATE CREATION VIA API (Bypass CLI bugs)
+          echo "--- Generating CSR & Private Key ---"
           openssl genrsa -out /tmp/key.pem 2048
           openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
           
-          echo "--- Uploading CSR to Apple ---"
-          # Valid flag in CLI 0.64.0 is exactly --csr
-          CREATE_OUTPUT=$($APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --csr /tmp/cert.csr --json || { echo "Command failed. Showing help for diagnostics:"; $APP_STORE_CONNECT_BIN certificates create --help; exit 1; })
-          echo "$CREATE_OUTPUT"
+          echo "--- Uploading CSR to Apple (Direct API Flow) ---"
+          python3 - <<EOF
+          import os, sys, json, time, jwt, requests, base64
           
-          # Extract the Certificate ID
-          CERT_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
+          def create_cert():
+              # 1. Config from environment
+              issuer_id = os.environ.get('APP_STORE_CONNECT_ISSUER_ID')
+              key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID')
+              private_key = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY').replace('\\n', '\n')
+              
+              # 2. Generate JWT for App Store Connect API
+              header = {'alg': 'ES256', 'kid': key_id, 'typ': 'JWT'}
+              payload = {
+                  'iss': issuer_id,
+                  'exp': int(time.time()) + 1200,
+                  'aud': 'appstoreconnect-v1'
+              }
+              token = jwt.encode(payload, private_key, algorithm='ES256', headers=header)
+              
+              # 3. Prepare CSR Content
+              with open('/tmp/cert.csr', 'r') as f:
+                  csr_lines = f.readlines()
+              csr_content = "".join([line.strip() for line in csr_lines if "CERTIFICATE REQUEST" not in line])
+              
+              # 4. POST request to create certificate
+              url = "https://api.appstoreconnect.apple.com/v1/certificates"
+              headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+              data = {
+                  "data": {
+                      "type": "certificates",
+                      "attributes": {
+                          "certificateType": "DISTRIBUTION",
+                          "csrContent": csr_content
+                      }
+                  }
+              }
+              
+              print(f"POSTing to {url}...")
+              resp = requests.post(url, headers=headers, json=data)
+              if resp.status_code != 201:
+                  print(f"ERROR: Apple API returned {resp.status_code}")
+                  print(resp.text)
+                  sys.exit(1)
+              
+              res_data = resp.json()
+              cert_id = res_data['data']['id']
+              cert_content_b64 = res_data['data']['attributes']['certificateContent']
+              
+              # 5. Save outputs for bash
+              with open('/tmp/cert.id', 'w') as f: f.write(cert_id)
+              with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(cert_content_b64))
+              print(f"SUCCESS: Created certificate {cert_id}")
           
-          if [ -z "$CERT_ID" ]; then
-            echo "ERROR: Certificate creation failed. Output was: $CREATE_OUTPUT"
-            exit 1
-          fi
+          if __name__ == "__main__":
+              create_cert()
+          EOF
           
-          echo "--- Downloading Certificate (ID: $CERT_ID) ---"
-          $APP_STORE_CONNECT_BIN certificates download --id "$CERT_ID" --path /tmp/cert.cer
+          CERT_ID=$(cat /tmp/cert.id)
           
           echo "--- Packaging P12 Bundle ---"
           openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
@@ -110,7 +153,6 @@ workflows:
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           rm -rf "$PROFILES_DIR"
           mkdir -p "$PROFILES_DIR"
-          # The --create flag ensures Apple generates/updates profiles for our new certificate.
           $APP_STORE_CONNECT_BIN fetch-signing-files "$APP_ID" \
             --type IOS_APP_STORE \
             --profiles-dir "$PROFILES_DIR" \
@@ -119,7 +161,7 @@ workflows:
           # 6. EXTRACT SIGNING DETAILS
           PROFILE_PATH=$(find "$PROFILES_DIR" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Signing profile fetch failed. Check App ID $APP_ID permissions."
+             echo "ERROR: Signing profile fetch failed."
              exit 1
           fi
           
@@ -131,7 +173,7 @@ workflows:
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          echo "Exported Details: Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
+          echo "Exported: Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
           # 7. XCODE SYNC
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
