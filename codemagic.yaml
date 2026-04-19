@@ -295,7 +295,14 @@ workflows:
             --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
     artifacts:
       - build/ios/ipa/*.ipa
-    publishing:
+    publishing:app_store_connect:
+        # Reuses the variables we already defined in your environment
+        auth: authenticated
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        key_id: $APP_STORE_CONNECT_KEY_ID
+        private_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        # This will automatically submit the build to TestFlight
+        submit_to_testflight: true
       email:
         recipients:
           - tommyholm97@gmail.com
