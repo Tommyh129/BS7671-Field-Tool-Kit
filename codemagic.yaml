@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Set this up in Codemagic UI later
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -32,24 +32,7 @@ workflows:
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           cd ios/App && pod repo update && cd ../..
-          MAX_RETRIES=3
-          COUNT=0
-          SUCCESS=false
-          while [ $COUNT -lt $MAX_RETRIES ]; do
-            COUNT=$((COUNT+1))
-            echo "Attempting Capacitor Sync (Attempt $COUNT of $MAX_RETRIES)..."
-            if npx cap sync ios; then
-              SUCCESS=true
-              break
-            else
-              echo "Sync failed. Waiting 15 seconds before retry..."
-              sleep 15
-            fi
-          done
-          if [ "$SUCCESS" = false ]; then
-            echo "ERROR: Capacitor sync failed after $MAX_RETRIES attempts."
-            exit 1
-          fi
+          npx cap sync ios || true
       - name: Set up Signing
         script: |
           set -e
@@ -64,9 +47,30 @@ workflows:
           # 2. KEYCHAIN & AUTH
           echo "--- Initializing Keychain ---"
           keychain initialize
+          
+          echo "--- Verifying Environment Variables ---"
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
-          # 3. PORTAL CLEANUP (Fresh start to avoid quota limits)
+          MISSING_VARS=0
+          for var in APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_PRIVATE_KEY; do
+            if [ -z "${!var}" ]; then
+              echo "ERROR: Environment variable $var is missing."
+              MISSING_VARS=1
+            fi
+          done
+          
+          if [ $MISSING_VARS -eq 1 ]; then
+            echo "CRITICAL: App Store Connect credentials are not set in the environment."
+            echo "Please ensure the 'app_store_credentials' group in Codemagic contains:"
+            echo "  - APP_STORE_CONNECT_ISSUER_ID"
+            echo "  - APP_STORE_CONNECT_KEY_ID"
+            echo "  - APP_STORE_CONNECT_PRIVATE_KEY"
+            echo "Current environment (APP_STORE_CONNECT_*):"
+            env | grep APP_STORE_CONNECT | cut -d= -f1 || true
+            exit 1
+          fi
+          
+          # 3. PORTAL CLEANUP (Fresh start)
           echo "--- Cleaning Old Distribution Certificates ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             CERT_IDS=$($APP_STORE_CONNECT_BIN certificates list --type "$type" --json | python3 -c "import sys, json; data = json.load(sys.stdin); print('\n'.join([d['id'] for d in data]))" || echo "")
@@ -87,53 +91,62 @@ workflows:
           import os, sys, json, time, jwt, requests, base64
           
           def create_cert():
-              # 1. Config from environment
-              issuer_id = os.environ.get('APP_STORE_CONNECT_ISSUER_ID')
-              key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID')
-              private_key = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY').replace('\\n', '\n')
-              
-              # 2. Generate JWT for App Store Connect API
-              header = {'alg': 'ES256', 'kid': key_id, 'typ': 'JWT'}
-              payload = {
-                  'iss': issuer_id,
-                  'exp': int(time.time()) + 1200,
-                  'aud': 'appstoreconnect-v1'
-              }
-              token = jwt.encode(payload, private_key, algorithm='ES256', headers=header)
-              
-              # 3. Prepare CSR Content
-              with open('/tmp/cert.csr', 'r') as f:
-                  csr_lines = f.readlines()
-              csr_content = "".join([line.strip() for line in csr_lines if "CERTIFICATE REQUEST" not in line])
-              
-              # 4. POST request to create certificate
-              url = "https://api.appstoreconnect.apple.com/v1/certificates"
-              headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-              data = {
-                  "data": {
-                      "type": "certificates",
-                      "attributes": {
-                          "certificateType": "DISTRIBUTION",
-                          "csrContent": csr_content
+              try:
+                  # 1. Config
+                  issuer_id = os.environ.get('APP_STORE_CONNECT_ISSUER_ID')
+                  key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID')
+                  private_key_raw = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY', '')
+                  private_key = private_key_raw.replace('\\n', '\n')
+                  
+                  if not issuer_id or not key_id or not private_key:
+                      print(f"ERROR: Missing environment variables. issuer_id={issuer_id is not None}, key_id={key_id is not None}, key_len={len(private_key)}")
+                      sys.exit(1)
+                  
+                  # 2. Generate JWT
+                  header = {'alg': 'ES256', 'kid': str(key_id), 'typ': 'JWT'}
+                  payload = {
+                      'iss': issuer_id,
+                      'exp': int(time.time()) + 1200,
+                      'aud': 'appstoreconnect-v1'
+                  }
+                  token = jwt.encode(payload, private_key, algorithm='ES256', headers=header)
+                  
+                  # 3. Prepare CSR
+                  with open('/tmp/cert.csr', 'r') as f:
+                      csr_lines = f.readlines()
+                  csr_content = "".join([line.strip() for line in csr_lines if "CERTIFICATE REQUEST" not in line])
+                  
+                  # 4. POST to Apple
+                  url = "https://api.appstoreconnect.apple.com/v1/certificates"
+                  headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                  data = {
+                      "data": {
+                          "type": "certificates",
+                          "attributes": {
+                              "certificateType": "DISTRIBUTION",
+                              "csrContent": csr_content
+                          }
                       }
                   }
-              }
-              
-              print(f"POSTing to {url}...")
-              resp = requests.post(url, headers=headers, json=data)
-              if resp.status_code != 201:
-                  print(f"ERROR: Apple API returned {resp.status_code}")
-                  print(resp.text)
+                  
+                  print(f"POSTing to {url}...")
+                  resp = requests.post(url, headers=headers, json=data)
+                  if resp.status_code != 201:
+                      print(f"ERROR: Apple API returned {resp.status_code}")
+                      print(resp.text)
+                      sys.exit(1)
+                  
+                  res_data = resp.json()
+                  cert_id = res_data['data']['id']
+                  cert_content_b64 = res_data['data']['attributes']['certificateContent']
+                  
+                  # 5. Save outputs
+                  with open('/tmp/cert.id', 'w') as f: f.write(cert_id)
+                  with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(cert_content_b64))
+                  print(f"SUCCESS: Created certificate {cert_id}")
+              except Exception as e:
+                  print(f"EXCEPTION: {str(e)}")
                   sys.exit(1)
-              
-              res_data = resp.json()
-              cert_id = res_data['data']['id']
-              cert_content_b64 = res_data['data']['attributes']['certificateContent']
-              
-              # 5. Save outputs for bash
-              with open('/tmp/cert.id', 'w') as f: f.write(cert_id)
-              with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(cert_content_b64))
-              print(f"SUCCESS: Created certificate {cert_id}")
           
           if __name__ == "__main__":
               create_cert()
@@ -172,8 +185,6 @@ workflows:
           echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
-          
-          echo "Exported: Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
           # 7. XCODE SYNC
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
