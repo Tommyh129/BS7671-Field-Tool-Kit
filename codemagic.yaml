@@ -31,6 +31,13 @@ workflows:
           # Force deployment target to 15.0 for compatibility
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
+          
+          # Fix Export Compliance (skip manual encryption question in TestFlight)
+          PLIST="ios/App/App/Info.plist"
+          if [ -f "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
+          fi
+          
           cd ios/App && pod repo update && cd ../..
           npx cap sync ios
       - name: Set up Signing
@@ -44,6 +51,7 @@ workflows:
           if [ -z "$APP_STORE_CONNECT_KEY_ID" ] && [ -n "$APP_STORE_CONNECT_KEY_IDENTIFIER" ]; then
             export APP_STORE_CONNECT_KEY_ID="$APP_STORE_CONNECT_KEY_IDENTIFIER"
           fi
+          echo "APP_STORE_CONNECT_KEY_ID=$APP_STORE_CONNECT_KEY_ID" >> $CM_ENV
           
           echo "--- Generating CSR ---"
           openssl genrsa -out /tmp/key.pem 2048
@@ -122,6 +130,30 @@ workflows:
                   with open(os.path.join(pdir, f"{pid}.mobileprovision"), 'wb') as f:
                       f.write(base64.b64decode(p_content))
                   with open('/tmp/profile.id', 'w') as f: f.write(pid)
+                  
+                  # 4. Sync App Metadata (Beta Review Info)
+                  print("Syncing App Beta Metadata...")
+                  ad = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]={app_id}", headers=headers).json()
+                  if ad.get('data'):
+                      aid = ad['data'][0]['id']
+                      # Beta App Review Detail
+                      rd = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers).json()
+                      if rd.get('data'):
+                          rid = rd['data']['id']
+                          requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{rid}", headers=headers, json={
+                              "data": {
+                                  "id": rid, "type": "betaAppReviewDetails",
+                                  "attributes": {"firstName": "Tommy", "lastName": "Holm", "phoneNumber": "+447802431919", "email": "tommyholm97@gmail.com"}
+                              }
+                          })
+                      # Beta Localization (Feedback Email)
+                      locs = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers).json()
+                      if locs.get('data'):
+                          for loc in locs['data']:
+                              requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{loc['id']}", headers=headers, json={
+                                  "data": {"id": loc['id'], "type": "betaAppLocalizations", "attributes": {"feedbackEmail": "tommyholm97@gmail.com"}}
+                              })
+                  
                   print("Sync completed successfully.")
               except Exception as e:
                   print(f"Fatal Python Error: {e}")
@@ -194,14 +226,12 @@ workflows:
             export APP_STORE_CONNECT_KEY_ID="$APP_STORE_CONNECT_KEY_IDENTIFIER"
           fi
           
-          # Find the generated IPA
           IPA_PATH=$(ls build/ios/ipa/*.ipa | head -1)
           if [ -z "$IPA_PATH" ]; then
             echo "ERROR: No IPA found to upload."
             exit 1
           fi
           
-          # Perform the upload
           $APP_STORE_CONNECT_BIN publish \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_ID" \
