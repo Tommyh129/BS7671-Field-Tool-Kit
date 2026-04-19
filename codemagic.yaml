@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials 
+        - app_store_credentials # Set this up in Codemagic UI later
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -108,7 +108,7 @@ workflows:
                       print(f"ERROR: Missing environment variables.")
                       sys.exit(1)
                   
-                  # 2. Generate JWT
+                  # 2. Generate JWT for authentication
                   header = {'alg': 'ES256', 'kid': str(key_id), 'typ': 'JWT'}
                   payload = {
                       'iss': issuer_id,
@@ -117,12 +117,12 @@ workflows:
                   }
                   token = jwt.encode(payload, private_key, algorithm='ES256', headers=header)
                   
-                  # 3. Prepare CSR
+                  # 3. Prepare CSR Content
                   with open('/tmp/cert.csr', 'r') as f:
                       csr_lines = f.readlines()
                   csr_content = "".join([line.strip() for line in csr_lines if "CERTIFICATE REQUEST" not in line])
                   
-                  # 4. POST to Apple
+                  # 4. POST request to create certificate
                   url = "https://api.appstoreconnect.apple.com/v1/certificates"
                   headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                   data = {
@@ -146,7 +146,7 @@ workflows:
                   cert_id = res_data['data']['id']
                   cert_content_b64 = res_data['data']['attributes']['certificateContent']
                   
-                  # 5. Save outputs
+                  # 5. Save outputs for bash
                   with open('/tmp/cert.id', 'w') as f: f.write(cert_id)
                   with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(cert_content_b64))
                   print(f"SUCCESS: Created certificate {cert_id}")
@@ -165,7 +165,7 @@ workflows:
           openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
           
           echo "--- Importing P12 into Keychain ---"
-          keychain add-certificates --p12 /tmp/cert.p12 --p12-password codemagic
+          keychain add-certificates --certificate /tmp/cert.p12 --certificate-password codemagic
           
           # 5. FETCH & AUTO-REPAIR PROFILES
           echo "--- Fetching & Updating Provisioning Profiles ---"
