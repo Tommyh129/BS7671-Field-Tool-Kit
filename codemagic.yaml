@@ -256,6 +256,12 @@ workflows:
           
           echo "Exported Details: Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           xcode-project use-profiles
+      - name: Increment Build Number
+        script: |
+          echo "--- Setting Build Number to $BUILD_NUMBER ---"
+          PBXPROJ=$(find ios/App/App.xcodeproj -name "project.pbxproj")
+          # This replaces the placeholder or old build number with the current Codemagic build ID
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9.]*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" "$PBXPROJ"
       - name: Build iOS app
         script: |
           # Create an explicit ExportOptions.plist to ensure the export phase is correct
