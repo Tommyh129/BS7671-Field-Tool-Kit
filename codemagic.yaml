@@ -51,6 +51,12 @@ workflows:
           echo "--- Verifying Environment Variables ---"
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
+          # Handle potential naming variation for Key ID
+          if [ -z "$APP_STORE_CONNECT_KEY_ID" ] && [ -n "$APP_STORE_CONNECT_KEY_IDENTIFIER" ]; then
+            echo "Note: Using APP_STORE_CONNECT_KEY_IDENTIFIER as APP_STORE_CONNECT_KEY_ID"
+            export APP_STORE_CONNECT_KEY_ID="$APP_STORE_CONNECT_KEY_IDENTIFIER"
+          fi
+          
           MISSING_VARS=0
           for var in APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_PRIVATE_KEY; do
             if [ -z "${!var}" ]; then
@@ -63,7 +69,7 @@ workflows:
             echo "CRITICAL: App Store Connect credentials are not set in the environment."
             echo "Please ensure the 'app_store_credentials' group in Codemagic contains:"
             echo "  - APP_STORE_CONNECT_ISSUER_ID"
-            echo "  - APP_STORE_CONNECT_KEY_ID"
+            echo "  - APP_STORE_CONNECT_KEY_ID (or APP_STORE_CONNECT_KEY_IDENTIFIER)"
             echo "  - APP_STORE_CONNECT_PRIVATE_KEY"
             echo "Current environment (APP_STORE_CONNECT_*):"
             env | grep APP_STORE_CONNECT | cut -d= -f1 || true
@@ -94,12 +100,12 @@ workflows:
               try:
                   # 1. Config
                   issuer_id = os.environ.get('APP_STORE_CONNECT_ISSUER_ID')
-                  key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID')
+                  key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID') or os.environ.get('APP_STORE_CONNECT_KEY_IDENTIFIER')
                   private_key_raw = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY', '')
                   private_key = private_key_raw.replace('\\n', '\n')
                   
                   if not issuer_id or not key_id or not private_key:
-                      print(f"ERROR: Missing environment variables. issuer_id={issuer_id is not None}, key_id={key_id is not None}, key_len={len(private_key)}")
+                      print(f"ERROR: Missing environment variables.")
                       sys.exit(1)
                   
                   # 2. Generate JWT
