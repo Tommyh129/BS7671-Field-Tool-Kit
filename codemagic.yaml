@@ -57,6 +57,14 @@ workflows:
           echo "--- Upgrading Codemagic CLI Tools ---"
           pip3 install --upgrade codemagic-cli-tools
           
+          # Force bash to recognize the new binary path
+          hash -r
+          
+          # Find the exact path to ensure we use the upgraded version
+          APP_STORE_CONNECT_BIN=$(dirname $(which python3))/app-store-connect
+          echo "Using App Store Connect CLI at: $APP_STORE_CONNECT_BIN"
+          $APP_STORE_CONNECT_BIN --version
+          
           # 1. NORMALIZE PRIVATE KEY
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
@@ -66,15 +74,15 @@ workflows:
           
           # 3. VERIFY API KEY ACCESS
           echo "--- Verifying API Key Permissions ---"
-          app-store-connect apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
+          $APP_STORE_CONNECT_BIN apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
           
           # 4. NUCLEAR CLEANUP
           echo "--- Cleaning Portal Certs ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
-            CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
+            CERT_IDS=$($APP_STORE_CONNECT_BIN certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
             for id in $CERT_IDS; do 
               echo "Deleting cert: $id"
-              app-store-connect certificates delete --id "$id" || true
+              $APP_STORE_CONNECT_BIN certificates delete --id "$id" || true
             done
           done
           sleep 5
@@ -86,7 +94,7 @@ workflows:
           
           echo "--- Uploading CSR to Apple ---"
           # Capture output to handle parsing
-          CREATE_OUTPUT=$(app-store-connect certificates create --type DISTRIBUTION --csr /tmp/cert.csr --json)
+          CREATE_OUTPUT=$($APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --csr /tmp/cert.csr --json)
           echo "$CREATE_OUTPUT"
           
           # Use Python to reliably extract the ID from the JSON output.
@@ -98,7 +106,7 @@ workflows:
           fi
           
           echo "--- Downloading Certificate (ID: $CERT_ID) ---"
-          app-store-connect certificates download --id "$CERT_ID" --path /tmp/cert.cer
+          $APP_STORE_CONNECT_BIN certificates download --id "$CERT_ID" --path /tmp/cert.cer
           
           echo "--- Packaging P12 ---"
           openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
@@ -110,7 +118,7 @@ workflows:
           # 6. FETCH PROVISIONING PROFILES
           echo "--- Fetching provisioning profiles ---"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          app-store-connect fetch-signing-files "$APP_ID" \
+          $APP_STORE_CONNECT_BIN fetch-signing-files "$APP_ID" \
             --type IOS_APP_STORE \
             --profiles-dir "$HOME/Library/MobileDevice/Provisioning Profiles"
           
