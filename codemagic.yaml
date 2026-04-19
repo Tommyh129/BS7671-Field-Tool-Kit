@@ -295,7 +295,8 @@ workflows:
             --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
     artifacts:
       - build/ios/ipa/*.ipa
-    publishing:app_store_connect:
+    publishing:
+      app_store_connect:
         # Reuses the variables we already defined in your environment
         auth: authenticated
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
