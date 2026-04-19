@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Set this up in Codemagic UI later
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -32,7 +32,24 @@ workflows:
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           cd ios/App && pod repo update && cd ../..
-          npx cap sync ios || true
+          MAX_RETRIES=3
+          COUNT=0
+          SUCCESS=false
+          while [ $COUNT -lt $MAX_RETRIES ]; do
+            COUNT=$((COUNT+1))
+            echo "Attempting Capacitor Sync (Attempt $COUNT of $MAX_RETRIES)..."
+            if npx cap sync ios; then
+              SUCCESS=true
+              break
+            else
+              echo "Sync failed. Waiting 15 seconds before retry..."
+              sleep 15
+            fi
+          done
+          if [ "$SUCCESS" = false ]; then
+            echo "ERROR: Capacitor sync failed after $MAX_RETRIES attempts."
+            exit 1
+          fi
       - name: Set up Signing
         script: |
           set -e
@@ -69,7 +86,7 @@ workflows:
             echo "CRITICAL: App Store Connect credentials are not set in the environment."
             echo "Please ensure the 'app_store_credentials' group in Codemagic contains:"
             echo "  - APP_STORE_CONNECT_ISSUER_ID"
-            echo "  - APP_STORE_CONNECT_KEY_ID (or APP_STORE_CONNECT_KEY_IDENTIFIER)"
+            echo "  - APP_STORE_CONNECT_KEY_ID"
             echo "  - APP_STORE_CONNECT_PRIVATE_KEY"
             echo "Current environment (APP_STORE_CONNECT_*):"
             env | grep APP_STORE_CONNECT | cut -d= -f1 || true
@@ -82,12 +99,12 @@ workflows:
             CERT_IDS=$($APP_STORE_CONNECT_BIN certificates list --type "$type" --json | python3 -c "import sys, json; data = json.load(sys.stdin); print('\n'.join([d['id'] for d in data]))" || echo "")
             for id in $CERT_IDS; do 
               echo "Deleting cert: $id"
-              $APP_STORE_CONNECT_BIN certificates delete --id "$id" || true
+              $APP_STORE_CONNECT_BIN certificates delete --certificate-id "$id" || true
             done
           done
           sleep 3
           
-          # 4. ROBUST CERTIFICATE CREATION VIA API (Bypass CLI bugs)
+          # 4. ROBUST CERTIFICATE CREATION VIA API
           echo "--- Generating CSR & Private Key ---"
           openssl genrsa -out /tmp/key.pem 2048
           openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
@@ -105,10 +122,10 @@ workflows:
                   private_key = private_key_raw.replace('\\n', '\n')
                   
                   if not issuer_id or not key_id or not private_key:
-                      print(f"ERROR: Missing environment variables.")
+                      print(f"ERROR: Missing flags.")
                       sys.exit(1)
                   
-                  # 2. Generate JWT for authentication
+                  # 2. Generate JWT
                   header = {'alg': 'ES256', 'kid': str(key_id), 'typ': 'JWT'}
                   payload = {
                       'iss': issuer_id,
@@ -117,12 +134,12 @@ workflows:
                   }
                   token = jwt.encode(payload, private_key, algorithm='ES256', headers=header)
                   
-                  # 3. Prepare CSR Content
+                  # 3. Prepare CSR
                   with open('/tmp/cert.csr', 'r') as f:
                       csr_lines = f.readlines()
                   csr_content = "".join([line.strip() for line in csr_lines if "CERTIFICATE REQUEST" not in line])
                   
-                  # 4. POST request to create certificate
+                  # 4. POST to Apple
                   url = "https://api.appstoreconnect.apple.com/v1/certificates"
                   headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                   data = {
@@ -146,7 +163,7 @@ workflows:
                   cert_id = res_data['data']['id']
                   cert_content_b64 = res_data['data']['attributes']['certificateContent']
                   
-                  # 5. Save outputs for bash
+                  # 5. Save outputs
                   with open('/tmp/cert.id', 'w') as f: f.write(cert_id)
                   with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(cert_content_b64))
                   print(f"SUCCESS: Created certificate {cert_id}")
