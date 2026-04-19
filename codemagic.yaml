@@ -188,13 +188,26 @@ workflows:
           echo "--- Submitting to App Store Connect ---"
           # Manually upload using CLI to keep keys hidden from YAML validation
           APP_STORE_CONNECT_BIN=$(dirname $(which python3))/app-store-connect
-          # Re-format private key for CLI
+          # Re-format private key and key ID for CLI
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
+          if [ -z "$APP_STORE_CONNECT_KEY_ID" ] && [ -n "$APP_STORE_CONNECT_KEY_IDENTIFIER" ]; then
+            export APP_STORE_CONNECT_KEY_ID="$APP_STORE_CONNECT_KEY_IDENTIFIER"
+          fi
+          
+          # Find the generated IPA
+          IPA_PATH=$(ls build/ios/ipa/*.ipa | head -1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "ERROR: No IPA found to upload."
+            exit 1
+          fi
+          
+          # Perform the upload
           $APP_STORE_CONNECT_BIN publish \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_ID" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY" \
-            --ipa $(ls build/ios/ipa/*.ipa | head -1)
+            --path "$IPA_PATH" \
+            --testflight
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
