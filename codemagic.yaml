@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Set this up in Codemagic UI (Variables: APP_STORE_CONNECT_PRIVATE_KEY, etc.)
+        - app_store_credentials 
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -30,10 +30,8 @@ workflows:
           fi
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
-          # Ensure M1 Silicon compatibility
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           cd ios/App && pod repo update && cd ../..
-          
           MAX_RETRIES=3
           COUNT=0
           SUCCESS=false
@@ -79,12 +77,33 @@ workflows:
           done
           sleep 3
           
-          # 4. NATIVE CERTIFICATE CREATION
-          echo "--- Generating Fresh Distribution Certificate ---"
-          # Native flow: CLI generates key and imports results to the active keychain automatically.
-          # We avoid manual CSR flags which were causing "unrecognized arguments" errors.
-          $APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --json > /tmp/cert_res.json
-          cat /tmp/cert_res.json
+          # 4. SURGICAL CERTIFICATE CREATION
+          echo "--- Generating Manual CSR & Key ---"
+          openssl genrsa -out /tmp/key.pem 2048
+          openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
+          
+          echo "--- Uploading CSR to Apple ---"
+          # Valid flag in CLI 0.64.0 is exactly --csr
+          CREATE_OUTPUT=$($APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --csr /tmp/cert.csr --json || { echo "Command failed. Showing help for diagnostics:"; $APP_STORE_CONNECT_BIN certificates create --help; exit 1; })
+          echo "$CREATE_OUTPUT"
+          
+          # Extract the Certificate ID
+          CERT_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
+          
+          if [ -z "$CERT_ID" ]; then
+            echo "ERROR: Certificate creation failed. Output was: $CREATE_OUTPUT"
+            exit 1
+          fi
+          
+          echo "--- Downloading Certificate (ID: $CERT_ID) ---"
+          $APP_STORE_CONNECT_BIN certificates download --id "$CERT_ID" --path /tmp/cert.cer
+          
+          echo "--- Packaging P12 Bundle ---"
+          openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
+          openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
+          
+          echo "--- Importing P12 into Keychain ---"
+          keychain add-certificates --p12 /tmp/cert.p12 --p12-password codemagic
           
           # 5. FETCH & AUTO-REPAIR PROFILES
           echo "--- Fetching & Updating Provisioning Profiles ---"
