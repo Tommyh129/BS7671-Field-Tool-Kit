@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials 
+        - app_store_credentials # Ensure variables are set here
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -32,13 +32,28 @@ workflows:
             echo "ERROR: ios directory was not created."
             exit 1
           fi
-          # Fix deployment targets and podfile compatibility
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           cd ios/App && pod repo update && cd ../..
-          # Sync with retries for network stability
-          npx cap sync ios || (sleep 10 && npx cap sync ios)
+          MAX_RETRIES=3
+          COUNT=0
+          SUCCESS=false
+          while [ $COUNT -lt $MAX_RETRIES ]; do
+            COUNT=$((COUNT+1))
+            echo "Attempting Capacitor Sync (Attempt $COUNT of $MAX_RETRIES)..."
+            if npx cap sync ios; then
+              SUCCESS=true
+              break
+            else
+              echo "Sync failed. Waiting 15 seconds before retry..."
+              sleep 15
+            fi
+          done
+          if [ "$SUCCESS" = false ]; then
+            echo "ERROR: Capacitor sync failed after $MAX_RETRIES attempts."
+            exit 1
+          fi
       - name: Set up Signing
         script: |
           set -e
@@ -70,73 +85,117 @@ workflows:
             exit 1
           fi
           
-          # 3. PORTAL CLEANUP
-          echo "--- Cleaning Old Distribution Certificates ---"
-          for type in DISTRIBUTION IOS_DISTRIBUTION; do
-            CERT_IDS=$($APP_STORE_CONNECT_BIN certificates list --type "$type" --json | python3 -c "import sys, json; data = json.load(sys.stdin); print('\n'.join([d['id'] for d in data]))" || echo "")
-            for id in $CERT_IDS; do 
-              echo "Deleting cert: $id"
-              $APP_STORE_CONNECT_BIN certificates delete --certificate-id "$id" || true
-            done
-          done
-          sleep 3
-          
-          # 4. CERTIFICATE CREATION (API BYPASS)
-          echo "--- Generating CSR & Private Key ---"
+          # 3. CONSOLIDATED PORTAL MANAGEMENT (Python)
+          echo "--- Generating CSR ---"
           openssl genrsa -out /tmp/key.pem 2048
           openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
           
+          echo "--- Managing Certificates via API ---"
           python3 - <<EOF
           import os, sys, json, time, jwt, requests, base64
-          def create_cert():
+          
+          def portal_sync():
               try:
                   issuer_id = os.environ.get('APP_STORE_CONNECT_ISSUER_ID')
                   key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID')
-                  private_key = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY', '').replace('\\n', '\n')
+                  raw_key = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY', '')
+                  # Fix potential double escape issues
+                  private_key = raw_key.replace('\\\\n', '\n').replace('\\n', '\n')
                   
+                  if not issuer_id or not key_id or not private_key:
+                      print("ERROR: Missing credentials")
+                      sys.exit(1)
+                      
+                  # JWT setup
                   header = {'alg': 'ES256', 'kid': str(key_id), 'typ': 'JWT'}
                   payload = {'iss': issuer_id, 'exp': int(time.time()) + 1200, 'aud': 'appstoreconnect-v1'}
                   token = jwt.encode(payload, private_key, algorithm='ES256', headers=header)
+                  token_str = token.decode('utf-8') if isinstance(token, bytes) else token
+                  headers = {"Authorization": f"Bearer {token_str}"}
                   
+                  # Cleanup
+                  print("Cleaning up old certificates...")
+                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=20", headers=headers)
+                  if resp.status_code == 200:
+                      for cert in resp.json().get('data', []):
+                          cid = cert['id']
+                          print(f"Deleting cert: {cid}")
+                          requests.delete(f"https://api.appstoreconnect.apple.com/v1/certificates/{cid}", headers=headers)
+                  
+                  # Create new
+                  print("Creating new certificate...")
                   with open('/tmp/cert.csr', 'r') as f:
                       csr_content = "".join([line.strip() for line in f.readlines() if "CERTIFICATE REQUEST" not in line])
                   
-                  resp = requests.post("https://api.appstoreconnect.apple.com/v1/certificates", 
-                      headers={"Authorization": f"Bearer {token}"}, 
-                      json={"data": {"type": "certificates", "attributes": {"certificateType": "DISTRIBUTION", "csrContent": csr_content}}})
+                  data = {"data": {"type": "certificates", "attributes": {"certificateType": "DISTRIBUTION", "csrContent": csr_content}}}
+                  resp = requests.post("https://api.appstoreconnect.apple.com/v1/certificates", headers=headers, json=data)
                   
-                  if resp.status_code != 201: sys.exit(1)
+                  if resp.status_code != 201:
+                      print(f"API Error ({resp.status_code}): {resp.text}")
+                      sys.exit(1)
+                      
                   res = resp.json()
-                  with open('/tmp/cert.id', 'w') as f: f.write(res['data']['id'])
-                  with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(res['data']['attributes']['certificateContent']))
-              except Exception as e: sys.exit(1)
-          create_cert()
+                  cid = res['data']['id']
+                  content = res['data']['attributes']['certificateContent']
+                  
+                  with open('/tmp/cert.id', 'w') as f: f.write(cid)
+                  with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(content))
+                  print(f"Successfully created certificate: {cid}")
+                  
+              except Exception as e:
+                  print(f"Fatal Exception: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
+                  sys.exit(1)
+          
+          portal_sync()
           EOF
           
-          echo "--- Importing into Keychain ---"
+          # 4. KEYCHAIN IMPORT
+          echo "--- Packaging & Importing P12 ---"
           openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
           openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
-          keychain add-certificates --certificate /tmp/cert.p12 --certificate-password codemagic
           
-          # 5. FETCH PROFILES
+          # Import into the default keychain created by Codemagic
+          # -A allows all apps to access (essential for non-interactive codesigning)
+          security import /tmp/cert.p12 -P "codemagic" -A
+          
+          # 5. FETCH & AUTO-REPAIR PROFILES
+          echo "--- Fetching Provisioning Profiles ---"
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          rm -rf "$PROFILES_DIR"
           mkdir -p "$PROFILES_DIR"
           $APP_STORE_CONNECT_BIN fetch-signing-files "$APP_ID" --type IOS_APP_STORE --profiles-dir "$PROFILES_DIR" --create
           
           # 6. EXTRACT SIGNING DETAILS & PATCH PROJECT
           PROFILE_PATH=$(find "$PROFILES_DIR" -name "*.mobileprovision" | head -1)
+          if [ -z "$PROFILE_PATH" ]; then
+             echo "ERROR: Signing profile fetch failed. Check App ID $APP_ID permissions."
+             exit 1
+          fi
+          
           export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep -o "<string>[^<]*" | sed 's/<string>//' | head -1 | xargs)
           export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" | grep -o "<string>[^<]*" | sed 's/<string>//' | head -1 | xargs)
           export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" | grep -o "<string>[^<]*" | sed 's/<string>//' | head -1 | xargs)
+          
+          if [ -z "$TEAM_ID" ] || [ -z "$PROFILE_UUID" ]; then
+             echo "ERROR: Could not extract signing details from profile."
+             exit 1
+          fi
           
           echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           
-          echo "--- Syncing Xcode Project with Team: $TEAM_ID ---"
+          echo "--- Finalizing Project Configuration ---"
+          # FORCE Team ID and Bundle ID into the project file
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = $APP_ID;/g" {} +
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
+          
+          echo "Exported Details: Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
+          
+          # 7. XCODE SYNC
           xcode-project use-profiles
       - name: Build iOS app
         script: |
