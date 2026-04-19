@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Set these variables in the Codemagic UI
+        - app_store_credentials # Configure these variables in the Codemagic UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -62,13 +62,19 @@ workflows:
           pip3 install --upgrade codemagic-cli-tools
           hash -r
           APP_STORE_CONNECT_BIN=$(dirname $(which python3))/app-store-connect
+          echo "Using App Store Connect CLI at: $APP_STORE_CONNECT_BIN"
+          $APP_STORE_CONNECT_BIN --version
+          
+          # 2. KEYCHAIN & AUTH
+          echo "--- Initializing Keychain ---"
           keychain initialize
           
-          # 2. AUTH & ENV VERIFICATION
           echo "--- Verifying Environment Variables ---"
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           
+          # Handle potential naming variation for Key ID
           if [ -z "$APP_STORE_CONNECT_KEY_ID" ] && [ -n "$APP_STORE_CONNECT_KEY_IDENTIFIER" ]; then
+            echo "Note: Using APP_STORE_CONNECT_KEY_IDENTIFIER as APP_STORE_CONNECT_KEY_ID"
             export APP_STORE_CONNECT_KEY_ID="$APP_STORE_CONNECT_KEY_IDENTIFIER"
           fi
           
@@ -81,7 +87,7 @@ workflows:
           done
           
           if [ $MISSING_VARS -eq 1 ]; then
-            echo "CRITICAL: App Store Connect credentials are missing."
+            echo "CRITICAL: App Store Connect credentials are not set in the environment."
             exit 1
           fi
           
@@ -227,10 +233,11 @@ workflows:
              exit 1
           fi
           
-          # Use more robust XML extraction for provisioning profiles
-          export TEAM_ID=$(grep -aA1 "TeamIdentifier" "$PROFILE_PATH" | grep -o "<string>[^<]*" | sed 's/<string>//' | head -1 | xargs)
-          export PROFILE_NAME=$(grep -aA1 "Name" "$PROFILE_PATH" | grep -o "<string>[^<]*" | sed 's/<string>//' | head -1 | xargs)
-          export PROFILE_UUID=$(grep -aA1 "UUID" "$PROFILE_PATH" | grep -o "<string>[^<]*" | sed 's/<string>//' | head -1 | xargs)
+          # Use native macOS tools for reliable extraction from binary provisioning profiles
+          security cms -D -i "$PROFILE_PATH" > /tmp/profile.plist
+          export TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print TeamIdentifier:0" /tmp/profile.plist)
+          export PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print Name" /tmp/profile.plist)
+          export PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /tmp/profile.plist)
           
           if [ -z "$TEAM_ID" ] || [ -z "$PROFILE_UUID" ]; then
              echo "ERROR: Could not extract signing details from profile."
@@ -247,10 +254,11 @@ workflows:
           sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = $APP_ID;/g" "$PBXPROJ"
           sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" "$PBXPROJ"
           
+          echo "Exported Details: Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           xcode-project use-profiles
       - name: Build iOS app
         script: |
-          # Create an explicit ExportOptions.plist to force strict signing compliance
+          # Create an explicit ExportOptions.plist to ensure the export phase is correct
           cat > ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -273,6 +281,7 @@ workflows:
           </plist>
           EOF
 
+          # Build and export IPA with strict flag enforcement
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME" \
