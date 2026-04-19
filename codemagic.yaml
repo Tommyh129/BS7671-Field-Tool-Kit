@@ -148,7 +148,7 @@ workflows:
       - build/ios/ipa/*.ipa
     publishing:
       app_store_connect:
-        auth: authenticated
+        auth: integration
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         key_id: $APP_STORE_CONNECT_KEY_ID
         private_key: $APP_STORE_CONNECT_PRIVATE_KEY
