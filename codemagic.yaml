@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # We will set this up in Codemagic UI later
+        - app_store_credentials # Set this up in Codemagic UI (Variables: APP_STORE_CONNECT_PRIVATE_KEY, etc.)
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -28,10 +28,12 @@ workflows:
             echo "ERROR: ios directory was not created."
             exit 1
           fi
+          # Ensuring M1 compatibility and deployment targets
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           cd ios/App && pod repo update && cd ../..
+          
           MAX_RETRIES=3
           COUNT=0
           SUCCESS=false
@@ -53,11 +55,9 @@ workflows:
       - name: Set up Signing
         script: |
           set -e
-          # 0. UPGRADE CLI TOOLS (Crucial to get latest flags like --csr)
+          # 0. UPGRADE CLI TOOLS (Ensures support for --csr-path)
           echo "--- Upgrading Codemagic CLI Tools ---"
           pip3 install --upgrade codemagic-cli-tools
-          
-          # Force bash to recognize the new binary path
           hash -r
           
           # Find the exact path to ensure we use the upgraded version
@@ -76,10 +76,10 @@ workflows:
           echo "--- Verifying API Key Permissions ---"
           $APP_STORE_CONNECT_BIN apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
           
-          # 4. NUCLEAR CLEANUP
+          # 4. NUCLEAR CLEANUP (Wipe Portal for fresh start)
           echo "--- Cleaning Portal Certs ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
-            CERT_IDS=$($APP_STORE_CONNECT_BIN certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
+            CERT_IDS=$($APP_STORE_CONNECT_BIN certificates list --type "$type" --json | python3 -c "import sys, json; data = json.load(sys.stdin); print('\n'.join([d['id'] for d in data]))" || echo "")
             for id in $CERT_IDS; do 
               echo "Deleting cert: $id"
               $APP_STORE_CONNECT_BIN certificates delete --id "$id" || true
@@ -93,22 +93,22 @@ workflows:
           openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
           
           echo "--- Uploading CSR to Apple ---"
-          # Capture output to handle parsing
-          CREATE_OUTPUT=$($APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --csr /tmp/cert.csr --json)
+          # Using --csr-path as required by Codemagic CLI 0.64.0
+          CREATE_OUTPUT=$($APP_STORE_CONNECT_BIN certificates create --type DISTRIBUTION --csr-path /tmp/cert.csr --json)
           echo "$CREATE_OUTPUT"
           
-          # Use Python to reliably extract the ID from the JSON output.
-          CERT_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import sys, json; print(json.load(sys.stdin)['id'])")
+          # Extract the Certificate ID
+          CERT_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
           
           if [ -z "$CERT_ID" ]; then
-            echo "ERROR: Certificate creation failed."
+            echo "ERROR: Certificate creation failed. Check App Store Connect agreements."
             exit 1
           fi
           
           echo "--- Downloading Certificate (ID: $CERT_ID) ---"
           $APP_STORE_CONNECT_BIN certificates download --id "$CERT_ID" --path /tmp/cert.cer
           
-          echo "--- Packaging P12 ---"
+          echo "--- Packaging P12 Bundle ---"
           openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
           openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
           
@@ -122,10 +122,10 @@ workflows:
             --type IOS_APP_STORE \
             --profiles-dir "$HOME/Library/MobileDevice/Provisioning Profiles"
           
-          # 7. Extract Profile Details
+          # 7. Extract Profile Details for Build Step
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed."
+             echo "ERROR: Fetch failed. Check portal for assigned devices/profiles."
              exit 1
           fi
 
@@ -139,7 +139,7 @@ workflows:
           
           echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
-          # 8. Apply manual signing configuration
+          # 8. Force Manual Signing in Xcode
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
           xcode-project use-profiles
       - name: Build iOS app
