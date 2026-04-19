@@ -5,7 +5,7 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Configured in Codemagic UI
+        - app_store_credentials # We will set this up in Codemagic UI later
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -21,24 +21,16 @@ workflows:
       - name: Create Native Project & Fix Dependencies
         script: |
           set -e
-          # 1. Start fresh
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
-          
-          # 2. Add ios platform
           npx cap add ios || true
-          
           if [ ! -d "ios" ]; then
             echo "ERROR: ios directory was not created."
             exit 1
           fi
-
-          # 3. Fix Deployment Target (Required for modern plugins)
           sed -i '' "s/platform :ios, '13.0'/platform :ios, '15.0'/g" ios/App/Podfile
           sed -i '' "s/platform :ios, '14.0'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
-          
-          # 4. Sync native project with Retries
           cd ios/App && pod repo update && cd ../..
           MAX_RETRIES=3
           COUNT=0
@@ -50,11 +42,10 @@ workflows:
               SUCCESS=true
               break
             else
-              echo "Sync failed. Waiting 15 seconds..."
+              echo "Sync failed. Waiting 15 seconds before retry..."
               sleep 15
             fi
           done
-
           if [ "$SUCCESS" = false ]; then
             echo "ERROR: Capacitor sync failed after $MAX_RETRIES attempts."
             exit 1
@@ -73,7 +64,7 @@ workflows:
           echo "--- Verifying API Key Permissions ---"
           app-store-connect apps list --json | grep -q "$APP_ID" || (echo "ERROR: API Key cannot see App $APP_ID. Check permissions."; exit 1)
           
-          # 4. NUCLEAR CLEANUP (Wipe Portal Certs)
+          # 4. NUCLEAR CLEANUP
           echo "--- Cleaning Portal Certs ---"
           for type in DISTRIBUTION IOS_DISTRIBUTION; do
             CERT_IDS=$(app-store-connect certificates list --type "$type" --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
@@ -85,23 +76,29 @@ workflows:
           sleep 5
           
           # 5. SURGICAL MANUAL P12 PAIRING
-          # Generating local RSA key and CSR to bypass tool bugs
+          # This bypasses the CLI tool's internal key generation which is failing.
           echo "--- Generating Manual CSR ---"
           openssl genrsa -out /tmp/key.pem 2048
           openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
           
           echo "--- Uploading CSR to Apple ---"
-          CERT_ID=$(app-store-connect certificates create --type DISTRIBUTION --csr-path /tmp/cert.csr --json | grep -o '"id": "[^"]*"' | cut -d'"' -f4 | head -1)
+          # We use --csr instead of --csr-path as confirmed by CLI signature.
+          # We capture the output to handle JSON parsing cleanly.
+          CREATE_OUTPUT=$(app-store-connect certificates create --type DISTRIBUTION --csr /tmp/cert.csr --json)
+          echo "$CREATE_OUTPUT"
+          
+          # Use Python to reliably extract the ID from the JSON output.
+          CERT_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import sys, json; print(json.load(sys.stdin)['id'])")
           
           if [ -z "$CERT_ID" ]; then
-            echo "ERROR: Certificate creation failed. Check agreements as Account Holder."
+            echo "ERROR: Certificate creation failed. Check App Store Connect agreements and ensure you are an Account Holder."
             exit 1
           fi
           
           echo "--- Downloading Certificate (ID: $CERT_ID) ---"
           app-store-connect certificates download --id "$CERT_ID" --path /tmp/cert.cer
           
-          echo "--- Packaging P12 bundle ---"
+          echo "--- Packaging P12 ---"
           openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
           openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution"
           
@@ -118,7 +115,7 @@ workflows:
           # 7. Extract Profile Details for Build Step
           PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -1)
           if [ -z "$PROFILE_PATH" ]; then
-             echo "ERROR: Fetch failed. Profiles could not be found."
+             echo "ERROR: Fetch failed. Check your API Key permissions and Portal agreements."
              exit 1
           fi
 
@@ -129,6 +126,8 @@ workflows:
           echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
+          
+          echo "Using Team: $TEAM_ID, Profile: $PROFILE_NAME ($PROFILE_UUID)"
           
           # 8. Apply manual signing configuration to Xcode project
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" {} +
