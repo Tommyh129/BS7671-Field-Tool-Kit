@@ -11,9 +11,10 @@ workflows:
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
         BETA_FEEDBACK_EMAIL: "tommyholm97@gmail.com"
-        BETA_CONTACT_PHONE: "+447802431919" # Verify your phone number here!
+        BETA_CONTACT_PHONE: "+447802431919"
         BETA_CONTACT_FIRST_NAME: "Tommy"
         BETA_CONTACT_LAST_NAME: "Holm"
+        BETA_DESCRIPTION: "A comprehensive toolkit for BS7671 electrical testing and compliance."
       node: 22
     scripts:
       - name: Install dependencies
@@ -152,7 +153,7 @@ workflows:
                           review_attr = {
                               "contactFirstName": os.environ.get('BETA_CONTACT_FIRST_NAME', 'Tommy'), 
                               "contactLastName": os.environ.get('BETA_CONTACT_LAST_NAME', 'Holm'), 
-                              "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+4500000000'), 
+                              "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+447802431919'), 
                               "contactEmail": os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com'),
                               "demoAccountRequired": False
                           }
@@ -180,11 +181,12 @@ workflows:
                           locs_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers)
                           locs = locs_resp.json()
                           f_email = os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com')
+                          b_desc = os.environ.get('BETA_DESCRIPTION', 'Field toolkit for BS7671 compliance.')
                           if locs.get('data'):
                               for loc in locs['data']:
                                   lid = loc['id']
                                   print(f"Patching Localization {lid}...")
-                                  p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": f_email}}})
+                                  p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": f_email, "description": b_desc}}})
                                   print(f"Patch Localization Status: {p_res.status_code}")
                                   if p_res.status_code > 299: print(f"Patch Error: {p_res.text}")
                           else:
@@ -192,7 +194,7 @@ workflows:
                               c_res = requests.post("https://api.appstoreconnect.apple.com/v1/betaAppLocalizations", headers=headers, json={
                                   "data": {
                                       "type": "betaAppLocalizations",
-                                      "attributes": {"locale": "en-US", "feedbackEmail": f_email},
+                                      "attributes": {"locale": "en-US", "feedbackEmail": f_email, "description": b_desc},
                                       "relationships": {"app": {"data": {"type": "apps", "id": aid}}}
                                   }
                               })
