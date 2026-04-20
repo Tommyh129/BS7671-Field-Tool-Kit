@@ -176,25 +176,38 @@ workflows:
                               print(f"Create Review Detail Status: {c_res.status_code}")
                               if c_res.status_code > 299: print(f"Create Error: {c_res.text}")
                           
-                          # Beta Localization (Feedback Email)
+                          # Beta Localization (Feedback Email & Description)
                           print("Fetching/Updating Beta Localizations...")
-                          locs_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers)
-                          locs = locs_resp.json()
                           f_email = os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com')
                           b_desc = os.environ.get('BETA_DESCRIPTION', 'Field toolkit for BS7671 compliance.')
+                          
+                          # Get Primary Locale
+                          app_info = ad['data'][0]['attributes']
+                          p_locale = app_info.get('primaryLocale', 'en-US')
+                          print(f"App Primary Locale: {p_locale}")
+                          
+                          locs_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers)
+                          locs = locs_resp.json()
+                          
+                          has_p_locale = False
                           if locs.get('data'):
                               for loc in locs['data']:
                                   lid = loc['id']
-                                  print(f"Patching Localization {lid}...")
+                                  loc_attr = loc['attributes']
+                                  current_locale = loc_attr.get('locale')
+                                  if current_locale == p_locale: has_p_locale = True
+                                  
+                                  print(f"Patching Localization {lid} ({current_locale})...")
                                   p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": f_email, "description": b_desc}}})
                                   print(f"Patch Localization Status: {p_res.status_code}")
                                   if p_res.status_code > 299: print(f"Patch Error: {p_res.text}")
-                          else:
-                              print("No localizations found - creating default (en-US)...")
+                          
+                          if not has_p_locale:
+                              print(f"Primary localization ({p_locale}) not found - creating...")
                               c_res = requests.post("https://api.appstoreconnect.apple.com/v1/betaAppLocalizations", headers=headers, json={
                                   "data": {
                                       "type": "betaAppLocalizations",
-                                      "attributes": {"locale": "en-US", "feedbackEmail": f_email, "description": b_desc},
+                                      "attributes": {"locale": p_locale, "feedbackEmail": f_email, "description": b_desc},
                                       "relationships": {"app": {"data": {"type": "apps", "id": aid}}}
                                   }
                               })
