@@ -32,7 +32,7 @@ workflows:
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # Fix Export Compliance (skip manual encryption question)
+          # Fix Export Compliance (skip manual encryption question in TestFlight)
           PLIST="ios/App/App/Info.plist"
           if [ -f "$PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
@@ -73,7 +73,7 @@ workflows:
                   headers = {"Authorization": f"Bearer {token}"}
                   
                   # 1. Cleanup old certificates (Apple has limits)
-                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=5", headers=headers)
+                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=100", headers=headers)
                   if resp.status_code == 200:
                       for cert in resp.json().get('data', []):
                           requests.delete(f"https://api.appstoreconnect.apple.com/v1/certificates/{cert['id']}", headers=headers)
@@ -139,7 +139,7 @@ workflows:
                       ad = ad_resp.json()
                       if ad.get('data'):
                           aid = ad['data'][0]['id']
-                          print(f"App ID: {aid}")
+                          print(f"App ID Found: {aid}")
                           
                           # Beta App Review Detail
                           print("Fetching/Updating Beta App Review Detail...")
@@ -148,7 +148,7 @@ workflows:
                           review_attr = {
                               "contactFirstName": "Tommy", 
                               "contactLastName": "Holm", 
-                              "contactPhone": "+45 12 34 56 78", 
+                              "contactPhone": "+4512345678", 
                               "contactEmail": "tommyholm97@gmail.com",
                               "demoAccountRequired": False
                           }
@@ -157,9 +157,10 @@ workflows:
                               rid = rd['data']['id']
                               print(f"Patching existing Review Detail {rid}...")
                               p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{rid}", headers=headers, json={"data": {"id": rid, "type": "betaAppReviewDetails", "attributes": review_attr}})
-                              print(f"Patch Status: {p_res.status_code} {p_res.text}")
+                              print(f"Patch Review Detail Status: {p_res.status_code}")
+                              if p_res.status_code > 299: print(f"Patch Error: {p_res.text}")
                           else:
-                              print("Review detail not found - attempting to create...")
+                              print("Review detail not found - creating...")
                               c_res = requests.post("https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails", headers=headers, json={
                                   "data": {
                                       "type": "betaAppReviewDetails",
@@ -167,7 +168,8 @@ workflows:
                                       "relationships": {"app": {"data": {"type": "apps", "id": aid}}}
                                   }
                               })
-                              print(f"Create Review Detail Status: {c_res.status_code} {c_res.text}")
+                              print(f"Create Review Detail Status: {c_res.status_code}")
+                              if c_res.status_code > 299: print(f"Create Error: {c_res.text}")
                           
                           # Beta Localization (Feedback Email)
                           print("Fetching/Updating Beta Localizations...")
@@ -179,6 +181,7 @@ workflows:
                                   print(f"Patching Localization {lid}...")
                                   p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": "tommyholm97@gmail.com"}}})
                                   print(f"Patch Localization Status: {p_res.status_code}")
+                                  if p_res.status_code > 299: print(f"Patch Error: {p_res.text}")
                           else:
                               print("No localizations found - creating default (en-US)...")
                               c_res = requests.post("https://api.appstoreconnect.apple.com/v1/betaAppLocalizations", headers=headers, json={
@@ -188,11 +191,12 @@ workflows:
                                       "relationships": {"app": {"data": {"type": "apps", "id": aid}}}
                                   }
                               })
-                              print(f"Create Localization Status: {c_res.status_code} {c_res.text}")
+                              print(f"Create Localization Status: {c_res.status_code}")
+                              if c_res.status_code > 299: print(f"Create Error: {c_res.text}")
                       else:
                           print(f"Error: App with bundle ID {app_id} not found.")
                   except Exception as e:
-                      print(f"Metadata Sync Error: {e}")
+                      print(f"Metadata Sync Exception: {e}")
                       traceback.print_exc()
                   
                   print("Sync completed.")
@@ -260,7 +264,7 @@ workflows:
         script: |
           echo "--- Submitting to App Store Connect ---"
           # Wait for metadata sync to propagate
-          sleep 20
+          sleep 30
           # Manually upload using CLI to keep keys hidden from YAML validation
           APP_STORE_CONNECT_BIN=$(dirname $(which python3))/app-store-connect
           # Re-format private key and key ID for CLI
@@ -280,7 +284,8 @@ workflows:
             --key-id "$APP_STORE_CONNECT_KEY_ID" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY" \
             --path "$IPA_PATH" \
-            --testflight
+            --testflight \
+            --expire-build-submitted-for-review
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
