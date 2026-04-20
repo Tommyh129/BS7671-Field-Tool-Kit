@@ -5,12 +5,12 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       groups:
-        - app_store_credentials # Configure these in Codemagic UI: issuer_id, key_id, private_key
+        - app_store_credentials
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
-        NODE_VERSION: 18
+      node: 22
     scripts:
       - name: Install dependencies
         script: |
@@ -21,19 +21,15 @@ workflows:
       - name: Create Native Project & Fix Dependencies
         script: |
           set -e
-          if [ ! -d "dist" ]; then
-            echo "ERROR: 'dist' directory not found."
-            exit 1
-          fi
           rm -rf ios
           echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
           npx cap add ios || true
           
-          # Force deployment target to 15.0 for compatibility
+          # Fix Deployment Target
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # Fix Export Compliance (skip manual encryption question in TestFlight)
+          # Export Compliance
           PLIST="ios/App/App/Info.plist"
           if [ -f "$PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
@@ -41,7 +37,7 @@ workflows:
           
           cd ios/App && pod repo update && cd ../..
           npx cap sync ios
-      - name: Set up Signing & App Metadata
+      - name: Set up Signing & Metadata
         script: |
           set -e
           pip3 install --upgrade codemagic-cli-tools
@@ -55,84 +51,79 @@ workflows:
           fi
           echo "APP_STORE_CONNECT_KEY_ID=$APP_STORE_CONNECT_KEY_ID" >> $CM_ENV
           
-          echo "--- Generating CSR ---"
+          # Generate CSR
           openssl genrsa -out /tmp/key.pem 2048
           openssl req -new -key /tmp/key.pem -out /tmp/cert.csr -subj "/CN=Apple Distribution: BS7671/O=FieldToolkit"
           
-          echo "--- Syncing Assets & Beta Metadata ---"
-          python3 - <<EOF
-          import os, sys, json, time, jwt, requests, base64
-          def portal_sync():
+          echo "--- Syncing Assets via API ---"
+          python3 -u - <<EOF
+          import os, sys, time, jwt, requests, base64
+          def sync():
               try:
                   issuer_id = os.environ.get('APP_STORE_CONNECT_ISSUER_ID')
                   key_id = os.environ.get('APP_STORE_CONNECT_KEY_ID')
                   raw_key = os.environ.get('APP_STORE_CONNECT_PRIVATE_KEY', '')
                   private_key = raw_key.replace('\\\\n', '\n').replace('\\n', '\n')
-                  
-                  token = jwt.encode({'iss': issuer_id, 'exp': int(time.time()) + 1200, 'aud': 'appstoreconnect-v1'}, private_key, algorithm='ES256', headers={'alg': 'ES256', 'kid': str(key_id), 'typ': 'JWT'})
+                  token = jwt.encode({'iss': issuer_id, 'exp': int(time.time()) + 600, 'aud': 'appstoreconnect-v1'}, private_key, algorithm='ES256', headers={'alg': 'ES256', 'kid': str(key_id), 'typ': 'JWT'})
                   if isinstance(token, bytes): token = token.decode('utf-8')
                   headers = {"Authorization": f"Bearer {token}"}
                   
-                  # 1. Cleanup Certificates
-                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=5", headers=headers)
-                  if resp.status_code == 200:
-                      for cert in resp.json().get('data', []):
-                          requests.delete(f"https://api.appstoreconnect.apple.com/v1/certificates/{cert['id']}", headers=headers)
+                  # 1. Cert Sync
+                  c_res = requests.post("https://api.appstoreconnect.apple.com/v1/certificates", headers=headers, json={"data": {"type": "certificates", "attributes": {"certificateType": "DISTRIBUTION", "csrContent": "".join([l.strip() for l in open('/tmp/cert.csr').readlines() if "REQUEST" not in l])}}})
+                  if c_res.status_code != 201:
+                      # If exists, delete and retry once
+                      certs = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION", headers=headers).json()
+                      for c in certs['data']: requests.delete(f"https://api.appstoreconnect.apple.com/v1/certificates/{c['id']}", headers=headers)
+                      time.sleep(2)
+                      c_res = requests.post("https://api.appstoreconnect.apple.com/v1/certificates", headers=headers, json={"data": {"type": "certificates", "attributes": {"certificateType": "DISTRIBUTION", "csrContent": "".join([l.strip() for l in open('/tmp/cert.csr').readlines() if "REQUEST" not in l])}}})
                   
-                  # 2. Create Certificate
-                  with open('/tmp/cert.csr', 'r') as f:
-                      csr = "".join([l.strip() for l in f.readlines() if "CERTIFICATE REQUEST" not in l])
-                  res = requests.post("https://api.appstoreconnect.apple.com/v1/certificates", headers=headers, json={"data": {"type": "certificates", "attributes": {"certificateType": "DISTRIBUTION", "csrContent": csr}}})
-                  cid = res.json()['data']['id']
-                  content = res.json()['data']['attributes']['certificateContent']
-                  with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(content))
+                  cid = c_res.json()['data']['id']
+                  with open('/tmp/cert.cer', 'wb') as f: f.write(base64.b64decode(c_res.json()['data']['attributes']['certificateContent']))
                   
-                  # 3. Create Profile
+                  # 2. Profile Sync
                   app_id = os.environ.get('APP_ID')
                   bid = requests.get(f"https://api.appstoreconnect.apple.com/v1/bundleIds?filter[identifier]={app_id}", headers=headers).json()['data'][0]['id']
                   pn = "FieldToolkit_Managed_Dist"
-                  r = requests.get(f"https://api.appstoreconnect.apple.com/v1/profiles?filter[name]={pn}", headers=headers)
-                  if r.status_code == 200:
-                      for p in r.json().get('data', []): requests.delete(f"https://api.appstoreconnect.apple.com/v1/profiles/{p['id']}", headers=headers)
+                  profiles = requests.get(f"https://api.appstoreconnect.apple.com/v1/profiles?filter[name]={pn}", headers=headers).json()
+                  for p in profiles['data']: requests.delete(f"https://api.appstoreconnect.apple.com/v1/profiles/{p['id']}", headers=headers)
                   time.sleep(2)
-                  res = requests.post("https://api.appstoreconnect.apple.com/v1/profiles", headers=headers, json={"data": {"type": "profiles", "attributes": {"name": pn, "profileType": "IOS_APP_STORE"}, "relationships": {"bundleId": {"data": {"type": "bundleIds", "id": bid}}, "certificates": {"data": [{"type": "certificates", "id": cid}]}}}})
-                  pid = res.json()['data']['id']
-                  with open('/tmp/profile.id', 'w') as f: f.write(pid)
                   
-                  # 4. CRITICAL: Sync Beta Info (fixes the "missing email" error)
+                  p_res = requests.post("https://api.appstoreconnect.apple.com/v1/profiles", headers=headers, json={"data": {"type": "profiles", "attributes": {"name": pn, "profileType": "IOS_APP_STORE"}, "relationships": {"bundleId": {"data": {"type": "bundleIds", "id": bid}}, "certificates": {"data": [{"type": "certificates", "id": cid}]}}}})
+                  pid = p_res.json()['data']['id']
+                  p_content = p_res.json()['data']['attributes']['profileContent']
+                  
+                  pdir = os.path.expanduser("~/Library/MobileDevice/Provisioning Profiles")
+                  os.makedirs(pdir, exist_ok=True)
+                  ppath = os.path.join(pdir, f"{pid}.mobileprovision")
+                  with open(ppath, 'wb') as f: f.write(base64.b64decode(p_content))
+                  with open('/tmp/profile.id', 'w') as f: f.write(pid)
+                  print(f"Profile saved to {ppath} (Size: {os.path.getsize(ppath)} bytes)")
+                  
+                  # 3. Metadata Sync
                   aid = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]={app_id}", headers=headers).json()['data'][0]['id']
-                  # Beta review detail
-                  brd = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers).json()
-                  if brd.get('data'):
-                      requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{brd['data']['id']}", headers=headers, json={"data": {"id": brd['data']['id'], "type": "betaAppReviewDetails", "attributes": {"firstName": "Tommy", "lastName": "Holm", "phoneNumber": "+4500000000", "email": "tommyholm97@gmail.com"}}})
-                  # Beta localization
-                  locs = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers).json()
-                  if locs.get('data'):
-                      for l in locs['data']:
-                          requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{l['id']}", headers=headers, json={"data": {"id": l['id'], "type": "betaAppLocalizations", "attributes": {"feedbackEmail": "tommyholm97@gmail.com"}}})
+                  brd = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers).json()['data']
+                  requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{brd['id']}", headers=headers, json={"data": {"id": brd['id'], "type": "betaAppReviewDetails", "attributes": {"firstName": "Tommy", "lastName": "Holm", "phoneNumber": "+4500000000", "email": "tommyholm97@gmail.com"}}})
                   
               except Exception as e:
-                  print(f"Error: {e}")
+                  print(f"FAILED: {e}")
                   sys.exit(1)
-          portal_sync()
+          sync()
           EOF
           
-          # Finish Signing
+          # Import Certificate
           openssl x509 -inform DER -in /tmp/cert.cer -out /tmp/cert.pem
           openssl pkcs12 -export -out /tmp/cert.p12 -inkey /tmp/key.pem -in /tmp/cert.pem -password pass:codemagic -name "Apple Distribution" -legacy
           KC_PATH=$(ls ~/Library/codemagic-cli-tools/keychains/*.keychain-db | head -1)
           security import /tmp/cert.p12 -k "$KC_PATH" -P "codemagic" -A -T /usr/bin/codesign -T /usr/bin/productsign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "codemagic" "$KC_PATH" > /dev/null 2>&1 || true
           
-          # Export UUIDs
+          # Extract and Export Signing Details
           PID=$(cat /tmp/profile.id)
           PATH_P="$HOME/Library/MobileDevice/Provisioning Profiles/${PID}.mobileprovision"
-          cp /tmp/profile.id "$HOME/Library/MobileDevice/Provisioning Profiles/${PID}.mobileprovision" # ensure it exists
-          security cms -D -i "$PATH_P" > /tmp/profile.plist || true
+          security cms -D -i "$PATH_P" > /tmp/profile.plist
           echo "TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' /tmp/profile.plist)" >> $CM_ENV
+          echo "PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' /tmp/profile.plist)" >> $CM_ENV
           echo "PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /tmp/profile.plist)" >> $CM_ENV
-          echo "PROFILE_NAME=FieldToolkit_Managed_Dist" >> $CM_ENV
-          
           xcode-project use-profiles
       - name: Increment Build Number
         script: |
