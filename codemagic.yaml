@@ -10,6 +10,10 @@ workflows:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
+        BETA_FEEDBACK_EMAIL: "tommyholm97@gmail.com"
+        BETA_CONTACT_PHONE: "+447802431919" # Verify your phone number here!
+        BETA_CONTACT_FIRST_NAME: "Tommy"
+        BETA_CONTACT_LAST_NAME: "Holm"
       node: 22
     scripts:
       - name: Install dependencies
@@ -146,10 +150,10 @@ workflows:
                           rd_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers)
                           rd = rd_resp.json()
                           review_attr = {
-                              "contactFirstName": "Tommy", 
-                              "contactLastName": "Holm", 
-                              "contactPhone": "+4512345678", 
-                              "contactEmail": "tommyholm97@gmail.com",
+                              "contactFirstName": os.environ.get('BETA_CONTACT_FIRST_NAME', 'Tommy'), 
+                              "contactLastName": os.environ.get('BETA_CONTACT_LAST_NAME', 'Holm'), 
+                              "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+4500000000'), 
+                              "contactEmail": os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com'),
                               "demoAccountRequired": False
                           }
                           
@@ -175,11 +179,12 @@ workflows:
                           print("Fetching/Updating Beta Localizations...")
                           locs_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers)
                           locs = locs_resp.json()
+                          f_email = os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com')
                           if locs.get('data'):
                               for loc in locs['data']:
                                   lid = loc['id']
                                   print(f"Patching Localization {lid}...")
-                                  p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": "tommyholm97@gmail.com"}}})
+                                  p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": f_email}}})
                                   print(f"Patch Localization Status: {p_res.status_code}")
                                   if p_res.status_code > 299: print(f"Patch Error: {p_res.text}")
                           else:
@@ -187,12 +192,16 @@ workflows:
                               c_res = requests.post("https://api.appstoreconnect.apple.com/v1/betaAppLocalizations", headers=headers, json={
                                   "data": {
                                       "type": "betaAppLocalizations",
-                                      "attributes": {"locale": "en-US", "feedbackEmail": "tommyholm97@gmail.com"},
+                                      "attributes": {"locale": "en-US", "feedbackEmail": f_email},
                                       "relationships": {"app": {"data": {"type": "apps", "id": aid}}}
                                   }
                               })
                               print(f"Create Localization Status: {c_res.status_code}")
                               if c_res.status_code > 299: print(f"Create Error: {c_res.text}")
+                          
+                          # Final Verification Check
+                          v_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers).json()
+                          print(f"VERIFICATION: Review Contact Email is {v_resp.get('data', {}).get('attributes', {}).get('contactEmail')}")
                       else:
                           print(f"Error: App with bundle ID {app_id} not found.")
                   except Exception as e:
@@ -280,6 +289,7 @@ workflows:
           fi
           
           $APP_STORE_CONNECT_BIN publish \
+            --log-api-calls \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_ID" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY" \
