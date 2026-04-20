@@ -32,7 +32,7 @@ workflows:
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-          # Fix Export Compliance (skip manual encryption question in TestFlight)
+          # Fix Export Compliance (skip manual encryption question)
           PLIST="ios/App/App/Info.plist"
           if [ -f "$PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
@@ -73,7 +73,7 @@ workflows:
                   headers = {"Authorization": f"Bearer {token}"}
                   
                   # 1. Cleanup old certificates (Apple has limits)
-                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=100", headers=headers)
+                  resp = requests.get("https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=5", headers=headers)
                   if resp.status_code == 200:
                       for cert in resp.json().get('data', []):
                           requests.delete(f"https://api.appstoreconnect.apple.com/v1/certificates/{cert['id']}", headers=headers)
@@ -146,10 +146,10 @@ workflows:
                           rd_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers)
                           rd = rd_resp.json()
                           review_attr = {
-                              "firstName": "Tommy", 
-                              "lastName": "Holm", 
-                              "phoneNumber": "+45 12 34 56 78", 
-                              "email": "tommyholm97@gmail.com",
+                              "contactFirstName": "Tommy", 
+                              "contactLastName": "Holm", 
+                              "contactPhone": "+45 12 34 56 78", 
+                              "contactEmail": "tommyholm97@gmail.com",
                               "demoAccountRequired": False
                           }
                           
