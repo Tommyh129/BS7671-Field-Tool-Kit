@@ -470,15 +470,66 @@ export default function App() {
     }
   };
 
-  const handleUpgrade = async () => {
-    if (!user) {
-      handleLogin();
-      return;
+ const handleUpgrade = async () => {
+  console.log("App: handleUpgrade triggered", {
+    hasUser: !!user,
+    effectiveIsPro,
+    isNative: Capacitor.isNativePlatform(),
+    platform: Capacitor.getPlatform()
+  });
+
+  if (!user) {
+    console.log("App: No user found, opening login...");
+    handleLogin();
+    return;
+  }
+
+  if (effectiveIsPro) {
+    console.log("App: User is already Pro, aborting upgrade.");
+    return;
+  }
+
+  setIsUpgrading(true);
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      console.log("App: Starting Native Purchase flow for:", PRO_PRODUCT_ID);
+      const transaction = await InAppPurchase.purchaseProduct({ 
+        productId: PRO_PRODUCT_ID,
+        productType: 'subscription',
+      });
+      
+      if (transaction) {
+        console.log("App: Native Purchase success ->", transaction.transactionId);
+        handleSuccessfulPurchase();
+      } else {
+        console.warn("App: Native Purchase returned no transaction");
+      }
+    } catch (error: any) {
+      console.error("App: Native Purchase failed", error);
+      alert(`Purchase failed: ${error?.message || 'Unknown error'}. Please try again.`);
+    } finally {
+      setIsUpgrading(false);
     }
+    return;
+  }
 
-    if (effectiveIsPro) return;
-
-    setIsUpgrading(true);
+  // Fallback to Stripe for Web
+  try {
+    console.log("App: Falling back to Stripe checkout session...");
+    const response = await fetch('/api/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.uid, email: user.email }),
+    });
+    const session = await response.json();
+    if (session.url) window.location.href = session.url;
+  } catch (error) {
+    console.error("Stripe error:", error);
+  } finally {
+    setIsUpgrading(false);
+  }
+};
 
     // Use Native IAP if on mobile
     if (Capacitor.isNativePlatform()) {
