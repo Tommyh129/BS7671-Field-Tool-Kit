@@ -184,8 +184,9 @@ export default function App() {
   };
 
   const effectiveIsPro = useMemo(() => {
-    return isPro;
-  }, [isPro]);
+   if (user && isAutoPro(user.email || "")) return true;
+  return isPro;
+}, [isPro, user]);
   
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
