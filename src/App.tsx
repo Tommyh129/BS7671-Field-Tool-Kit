@@ -830,14 +830,20 @@ Calculated via BS7671 Field Toolkit
         </div>
         {!effectiveIsPro && (
           <button 
-            onClick={handleUpgrade}
-            className="bg-emerald-500/10 text-emerald-500 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
-          >
-            <Crown size={12} />
-            Go Pro
-          </button>
-        )}
-      </div>
+  onClick={(e) => {
+    e.stopPropagation();
+    handleUpgrade();
+  }}
+  disabled={isUpgrading}
+  className="bg-black text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-zinc-900 transition-colors disabled:opacity-50 flex items-center gap-2"
+>
+  {isUpgrading ? (
+    <>
+      <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+      Processing...
+    </>
+  ) : "Start Free Trial"}
+</button>
 
       {/* Regulatory Status Card */}
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border mb-2">
