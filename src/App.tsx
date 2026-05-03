@@ -1193,7 +1193,7 @@ Calculated via BS7671 Field Toolkit
             {user ? (
               <button id="settings-button" onClick={() => setShowSettingsModal(true)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
                 {user.photoURL ? (
-                  <img src={user.photoURL} alt="" className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />
+                 <img src="/icons/icon-192.webp" alt="App Icon" className="w-full h-full object-cover" />
                 ) : (
                   <UserIcon size={20} className="text-gray-400" />
                 )}
