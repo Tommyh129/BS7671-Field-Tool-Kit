@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user subscription status and preferences",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "isPro": { "type": "boolean", "description": "Whether the user has a pro subscription" },
+        "subscriptionId": { "type": "string", "description": "Stripe subscription ID" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "isPro"]
+    },
+    "CalculationHistory": {
+      "title": "Calculation History",
+      "description": "A saved calculation result",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["circuit", "zs", "fault", "three-phase", "electrode"] },
+        "title": { "type": "string" },
+        "inputs": { "type": "object" },
+        "results": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "title", "inputs", "results", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile and subscription data"
+    },
+    "/users/{userId}/history/{historyId}": {
+      "schema": "CalculationHistory",
+      "description": "User's saved calculation history"
+    }
+  }
+}
