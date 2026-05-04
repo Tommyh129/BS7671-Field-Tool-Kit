@@ -37,9 +37,6 @@ workflows:
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
-<<<<<<< HEAD
-          # Fix Export Compliance (skip manual encryption question)
-=======
           # Fix Export Compliance (skip manual encryption question in TestFlight)
 >>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
           PLIST="ios/App/App/Info.plist"
