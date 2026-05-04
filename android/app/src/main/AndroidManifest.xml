@@ -1,5 +1,11 @@
+<<<<<<< HEAD
 <?xml version="1.0" encoding="utf-8" ?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+=======
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -7,6 +13,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+<<<<<<< HEAD
+=======
+
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
@@ -14,10 +24,18 @@
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
             android:exported="true">
+<<<<<<< HEAD
+=======
+
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+<<<<<<< HEAD
+=======
+
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         </activity>
 
         <provider
@@ -25,11 +43,21 @@
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
+<<<<<<< HEAD
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+=======
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         </provider>
     </application>
 
     <!-- Permissions -->
+<<<<<<< HEAD
     <uses-permission android:name="com.android.vending.BILLING" />
+=======
+
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
     <uses-permission android:name="android.permission.INTERNET" />
 </manifest>

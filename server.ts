@@ -64,6 +64,7 @@ async function startServer() {
           }
         }
         break;
+<<<<<<< HEAD
       case "customer.subscription.deleted":
         const subscription = event.data.object as Stripe.Subscription;
         // We need to find the user by subscriptionId
@@ -82,6 +83,8 @@ async function startServer() {
           console.error(`Error revoking Pro for subscription ${subscription.id}:`, error);
         }
         break;
+=======
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
       default:
         console.log(`Unhandled event type ${event.type}`);
     }
@@ -114,20 +117,30 @@ async function startServer() {
               currency: "gbp",
               product_data: {
                 name: "BS7671 Field Toolkit Pro Subscription",
+<<<<<<< HEAD
                 description: "Unlock all advanced electrical design tools (1 Month Free Trial)",
               },
               unit_amount: 599, // £5.99
               recurring: {
                 interval: "month",
               },
+=======
+                description: "Unlock all advanced electrical design tools",
+              },
+              unit_amount: 599, // £5.99
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
             },
             quantity: 1,
           },
         ],
+<<<<<<< HEAD
         mode: "subscription",
         subscription_data: {
           trial_period_days: 30,
         },
+=======
+        mode: "payment",
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         success_url: `${appUrl}?success=true`,
         cancel_url: `${appUrl}?canceled=true`,
         customer_email: email,

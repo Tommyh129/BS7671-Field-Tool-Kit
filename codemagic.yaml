@@ -37,7 +37,11 @@ workflows:
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
+<<<<<<< HEAD
           # Fix Export Compliance (skip manual encryption question)
+=======
+          # Fix Export Compliance (skip manual encryption question in TestFlight)
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
           PLIST="ios/App/App/Info.plist"
           if [ -f "$PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
@@ -153,7 +157,11 @@ workflows:
                           review_attr = {
                               "contactFirstName": os.environ.get('BETA_CONTACT_FIRST_NAME', 'Tommy'), 
                               "contactLastName": os.environ.get('BETA_CONTACT_LAST_NAME', 'Holm'), 
+<<<<<<< HEAD
                               "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+4500000000'), 
+=======
+                              "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+447802431919'), 
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                               "contactEmail": os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com'),
                               "demoAccountRequired": False
                           }
@@ -176,7 +184,11 @@ workflows:
                               print(f"Create Review Detail Status: {c_res.status_code}")
                               if c_res.status_code > 299: print(f"Create Error: {c_res.text}")
                           
+<<<<<<< HEAD
                           # Beta Localization (Feedback Email)
+=======
+                          # Beta Localization (Feedback Email & Description)
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                           print("Fetching/Updating Beta Localizations...")
                           f_email = os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com')
                           b_desc = os.environ.get('BETA_DESCRIPTION', 'Field toolkit for BS7671 compliance.')

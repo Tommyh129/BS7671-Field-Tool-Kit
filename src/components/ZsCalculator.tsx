@@ -20,7 +20,11 @@ import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { downloadFile } from '../utils/download';
 import { SupplySystem, DeviceType } from '../types';
+<<<<<<< HEAD
 import { CABLE_RESISTANCE, DEVICE_LIMITS } from '../constants';
+=======
+import { CABLE_RESISTANCE, DEVICE_LIMITS, CABLE_CONFIGURATIONS } from '../constants';
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
@@ -32,13 +36,23 @@ interface ZsCalculatorProps {
 export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
   const [supplySystem, setSupplySystem] = useState<SupplySystem>(SupplySystem.TN_C_S);
   const [ze, setZe] = useState<string>('0.35');
+<<<<<<< HEAD
   const [phaseSize, setPhaseSize] = useState<string>('2.5');
   const [cpcSize, setCpcSize] = useState<string>('1.5');
+=======
+  const [cableSize, setCableSize] = useState<string>('2.5/1.5');
+  const [customPhaseSize, setCustomPhaseSize] = useState<string>('2.5');
+  const [customCpcSize, setCustomCpcSize] = useState<string>('1.5');
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   const [resistance, setResistance] = useState<string>('19.51');
   const [cableLength, setCableLength] = useState<string>('');
   const [useTotalResistance, setUseTotalResistance] = useState(false);
   const [totalResistance, setTotalResistance] = useState<string>('');
   const [deviceType, setDeviceType] = useState<DeviceType>(DeviceType.MCB_B);
+<<<<<<< HEAD
+=======
+  const [isCustomCable, setIsCustomCable] = useState(false);
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   const [protectiveDevice, setProtectiveDevice] = useState<number>(32);
   const [showResult, setShowResult] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -60,6 +74,7 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
 
   // Update resistance when cable size changes
   useEffect(() => {
+<<<<<<< HEAD
     const phase = parseFloat(phaseSize);
     const cpc = parseFloat(cpcSize);
     
@@ -68,6 +83,31 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
       setResistance(totalResistanceMilliOhms.toFixed(3));
     }
   }, [phaseSize, cpcSize]);
+=======
+    if (isCustomCable) {
+      const phase = parseFloat(customPhaseSize);
+      const cpc = parseFloat(customCpcSize);
+      
+      if (CABLE_RESISTANCE[phase] && CABLE_RESISTANCE[cpc]) {
+        const totalResistanceMilliOhms = CABLE_RESISTANCE[phase] + CABLE_RESISTANCE[cpc];
+        setResistance(totalResistanceMilliOhms.toFixed(3));
+      }
+      return;
+    }
+    
+    const config = CABLE_CONFIGURATIONS.find(c => c.size === cableSize);
+    if (config) {
+      setResistance(config.resistance.toString());
+    }
+  }, [cableSize, isCustomCable, customPhaseSize, customCpcSize]);
+
+  // Sync cableSize when custom inputs change
+  useEffect(() => {
+    if (isCustomCable) {
+      setCableSize(`${customPhaseSize}/${customCpcSize}`);
+    }
+  }, [customPhaseSize, customCpcSize, isCustomCable]);
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 
   const calculation = useMemo(() => {
     const zeVal = parseFloat(ze) || 0;
@@ -102,7 +142,11 @@ Supply: ${supplySystem}
 Ze: ${ze} Ω
 ${useTotalResistance 
   ? `Total R1+R2: ${totalResistance} Ω` 
+<<<<<<< HEAD
   : `Cable: ${phaseSize}/${cpcSize}mm² (${cableLength}m)\nResistance: ${resistance} mΩ/m`}
+=======
+  : `Cable: ${cableSize}mm² (${cableLength}m)\nResistance: ${resistance} mΩ/m`}
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 Device: ${deviceType} ${protectiveDevice}A
 
 Calculated Zs: ${calculation.zs.toFixed(2)} Ω
@@ -181,7 +225,11 @@ Calculated via BS7671 Field Toolkit
         auth.currentUser!.uid,
         'zs',
         `Zs: ${deviceType} ${protectiveDevice}A`,
+<<<<<<< HEAD
         { supplySystem, ze, cableSize: `${phaseSize}/${cpcSize}`, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice },
+=======
+        { ze, cableSize, cableLength, deviceType, protectiveDevice },
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         { zs: calculation.zs, maxZs: calculation.maxZs, isCompliant: calculation.isCompliant }
       );
       // Show success state
@@ -258,6 +306,7 @@ Calculated via BS7671 Field Toolkit
           <div className="grid grid-cols-1 gap-4">
             {!useTotalResistance ? (
               <div className="space-y-4">
+<<<<<<< HEAD
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Phase Conductor (mm²)</label>
@@ -305,6 +354,85 @@ Calculated via BS7671 Field Toolkit
                     onChange={(e) => setResistance(e.target.value)}
                     className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none"
                   />
+=======
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Cable Configuration (Phase/CPC)</label>
+                  <div className="relative">
+                    <select 
+                      value={isCustomCable ? 'custom' : cableSize}
+                      onChange={(e) => {
+                        if (e.target.value === 'custom') {
+                          const [phase, cpc] = cableSize.split('/');
+                          if (phase && cpc) {
+                            setCustomPhaseSize(phase);
+                            setCustomCpcSize(cpc);
+                          }
+                          setIsCustomCable(true);
+                        } else {
+                          setIsCustomCable(false);
+                          setCableSize(e.target.value);
+                        }
+                      }}
+                      className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
+                    >
+                      {CABLE_CONFIGURATIONS.map(config => (
+                        <option key={config.size} value={config.size}>{config.label}</option>
+                      ))}
+                      <option value="custom">Custom / Manual Entry</option>
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" size={18} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">
+                      {isCustomCable ? 'Cable Size (Phase / CPC)' : 'Selected Size'}
+                    </label>
+                    {isCustomCable ? (
+                      <div className="flex gap-2 items-center">
+                        <input 
+                          type="text"
+                          value={customPhaseSize}
+                          onChange={(e) => setCustomPhaseSize(e.target.value)}
+                          placeholder="Phase"
+                          className="w-full bg-black/40 border border-hardware-border rounded-2xl px-3 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none text-center"
+                        />
+                        <span className="text-gray-500 font-bold">/</span>
+                        <input 
+                          type="text"
+                          value={customCpcSize}
+                          onChange={(e) => setCustomCpcSize(e.target.value)}
+                          placeholder="CPC"
+                          className="w-full bg-black/40 border border-hardware-border rounded-2xl px-3 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none text-center"
+                        />
+                      </div>
+                    ) : (
+                      <input 
+                        type="text"
+                        value={cableSize}
+                        disabled
+                        className="w-full bg-black/20 border border-hardware-border rounded-2xl px-4 py-4 text-gray-400 font-mono font-bold outline-none disabled:cursor-not-allowed"
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Resistance (mΩ/m)</label>
+                      {isCustomCable && CABLE_RESISTANCE[parseFloat(customPhaseSize)] && CABLE_RESISTANCE[parseFloat(customCpcSize)] && (
+                        <span className="text-[8px] font-bold text-emerald-500 uppercase tracking-widest">Auto-calculated</span>
+                      )}
+                    </div>
+                    <input 
+                      type="number"
+                      inputMode="decimal"
+                      value={resistance}
+                      onChange={(e) => setResistance(e.target.value)}
+                      disabled={!isCustomCable}
+                      className={`w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none ${!isCustomCable && 'opacity-60'}`}
+                    />
+                  </div>
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                 </div>
               </div>
             ) : (
@@ -577,7 +705,11 @@ Calculated via BS7671 Field Toolkit
                           </div>
                           <div>
                             <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Cable</span>
+<<<<<<< HEAD
                             <span className="text-sm font-mono font-bold">{phaseSize}/{cpcSize} mm²</span>
+=======
+                            <span className="text-sm font-mono font-bold">{cableSize} mm²</span>
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                           </div>
                         </>
                       )}
@@ -632,7 +764,11 @@ Calculated via BS7671 Field Toolkit
                       <div className="grid grid-cols-2 gap-4 border-b border-gray-50 pb-4">
                         <div>
                           <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Cable Size</span>
+<<<<<<< HEAD
                           <span className="text-sm font-mono font-bold text-gray-900">{phaseSize}/{cpcSize} mm²</span>
+=======
+                          <span className="text-sm font-mono font-bold text-gray-900">{cableSize} mm²</span>
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                         </div>
                         <div>
                           <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Length</span>

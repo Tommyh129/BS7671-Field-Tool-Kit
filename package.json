@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
   "name": "react-example",
+=======
+  "name": "bs7671-toolkit",
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +12,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
+<<<<<<< HEAD
     "assets:generate": "npx capacitor-assets generate",
+=======
+    "assets:generate": "npx @capacitor/assets generate",
+>>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
     "lint": "tsc --noEmit"
   },
   "dependencies": {
