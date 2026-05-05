@@ -61,14 +61,10 @@ import {
   OAuthProvider,
   onAuthStateChanged, 
   signOut,
-<<<<<<< HEAD
   User,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile
-=======
-  User
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 } from 'firebase/auth';
 import { 
   doc, 
@@ -140,16 +136,10 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 // --- Constants ---
-<<<<<<< HEAD
 const PRIVACY_POLICY_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app?page=privacy';
 const TERMS_OF_SERVICE_URL = 'https://app.termly.io/policy-viewer/policy.html?policyUUID=6b10edd9-015b-429b-88bc-e8e2c415ed7d';
 const SUPPORT_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app?page=support';
 const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
-=======
-const PRIVACY_POLICY_URL = 'https://app.termly.io/policy-viewer/policy.html?policyUUID=6b10edd9-015b-429b-88bc-e8e2c415ed7d';
-const TERMS_OF_SERVICE_URL = 'https://app.termly.io/policy-viewer/policy.html?policyUUID=91dde6aa-55a2-4e06-bd83-2ae1c31dd091';
-const SUPPORT_URL = 'mailto:tommyholm@hotmail.co.uk';
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 const PRO_PRODUCT_ID = 'pro_subscription'; // Match your App Store/Play Store ID
 
 export default function App() {
@@ -161,7 +151,6 @@ export default function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isPro, setIsPro] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
-<<<<<<< HEAD
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -169,8 +158,6 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 
   const TEST_EMAILS = ["test@example.com", "tester@circuitsmart.com"];
   const isAutoPro = (email: string) => {
@@ -189,7 +176,6 @@ export default function App() {
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [recentTools, setRecentTools] = useState<AppMode[]>([]);
   const [hasApiKey, setHasApiKey] = useState(true);
-<<<<<<< HEAD
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 
   // Handle URL parameters for deep linking (Privacy, Account Deletion)
@@ -204,8 +190,6 @@ export default function App() {
       setMode(AppMode.SUPPORT);
     }
   }, []);
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 
   useEffect(() => {
     const checkKey = async () => {
@@ -229,7 +213,6 @@ export default function App() {
   };
 
   const effectiveIsPro = useMemo(() => {
-<<<<<<< HEAD
     // Force Pro for specific testing accounts if needed
     if (user && isAutoPro(user.email || "")) return true;
     return isPro;
@@ -238,14 +221,6 @@ export default function App() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [cleanMode, setCleanMode] = useState(false);
-=======
-   if (user && isAutoPro(user.email || "")) return true;
-  return isPro;
-}, [isPro, user]);
-  
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -307,7 +282,6 @@ export default function App() {
   
   const allMethods = useMemo(() => Object.values(InstallationMethod), []);
 
-<<<<<<< HEAD
   // --- Auth & IAP Logic ---
   useEffect(() => {
     console.log("App: Initializing Auth & IAP...");
@@ -321,11 +295,6 @@ export default function App() {
       }
     }
 
-=======
-  // --- Auth Logic ---
-  useEffect(() => {
-    console.log("App: Initializing Auth Listener...");
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
     let unsubProfile: (() => void) | null = null;
 
     // Check for Stripe success redirect
@@ -432,7 +401,6 @@ export default function App() {
     testConnection();
   }, []);
 
-<<<<<<< HEAD
   const handleLogin = async (providerType: 'google' | 'apple' | 'email' = 'google') => {
     setLoginError(null);
     if (providerType === 'email') {
@@ -459,18 +427,12 @@ export default function App() {
       return;
     }
 
-=======
-  const handleLogin = async (providerType: 'google' | 'apple' = 'google') => {
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
     try {
       const provider = providerType === 'google' 
         ? new GoogleAuthProvider() 
         : new OAuthProvider('apple.com');
       await signInWithPopup(auth, provider);
-<<<<<<< HEAD
       setShowLoginModal(false);
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
     } catch (error) {
       console.error(`${providerType} login failed`, error);
     }
@@ -575,7 +537,6 @@ export default function App() {
     }
   };
 
-<<<<<<< HEAD
   const handleUpgrade = async () => {
     console.log("App: handleUpgrade triggered", {
       hasUser: !!user,
@@ -596,77 +557,11 @@ export default function App() {
     }
 
     setIsUpgrading(true);
-=======
- const handleUpgrade = async () => {
-  console.log("App: handleUpgrade triggered", {
-    hasUser: !!user,
-    effectiveIsPro,
-    isNative: Capacitor.isNativePlatform(),
-    platform: Capacitor.getPlatform()
-  });
-
-  if (!user) {
-    console.log("App: No user found, opening login...");
-    handleLogin();
-    return;
-  }
-
-  if (effectiveIsPro) {
-    console.log("App: User is already Pro, aborting upgrade.");
-    return;
-  }
-
-  setIsUpgrading(true);
-
-  if (Capacitor.isNativePlatform()) {
-    try {
-      console.log("App: Starting Native Purchase flow for:", PRO_PRODUCT_ID);
-      const transaction = await InAppPurchase.purchaseProduct({ 
-        productId: PRO_PRODUCT_ID,
-        productType: 'subscription',
-      });
-      
-      if (transaction) {
-        console.log("App: Native Purchase success ->", transaction.transactionId);
-        handleSuccessfulPurchase();
-      } else {
-        console.warn("App: Native Purchase returned no transaction");
-      }
-    } catch (error: any) {
-      console.error("App: Native Purchase failed", error);
-      alert(`Purchase failed: ${error?.message || 'Unknown error'}. Please try again.`);
-    } finally {
-      setIsUpgrading(false);
-    }
-    return;
-  }
-
-  // Fallback to Stripe for Web
-  try {
-    console.log("App: Falling back to Stripe checkout session...");
-    const response = await fetch('/api/create-checkout-session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user.uid, email: user.email }),
-    });
-    const session = await response.json();
-    if (session.url) window.location.href = session.url;
-  } catch (error) {
-    console.error("Stripe error:", error);
-  } finally {
-    setIsUpgrading(false);
-  }
-};
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 
     // Use Native IAP if on mobile
     if (Capacitor.isNativePlatform()) {
       try {
-<<<<<<< HEAD
         console.log("App: Starting Native Purchase flow for:", PRO_PRODUCT_ID);
-=======
-        console.log("App: Starting Native Purchase...");
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         const transaction = await InAppPurchase.purchaseProduct({ 
           productId: PRO_PRODUCT_ID,
           productType: 'non-consumable',
@@ -676,19 +571,12 @@ export default function App() {
         if (transaction) {
           console.log("App: Native Purchase success ->", transaction.transactionId);
           handleSuccessfulPurchase();
-<<<<<<< HEAD
         } else {
           console.warn("App: Native Purchase returned no transaction");
         }
       } catch (error: any) {
         console.error("App: Native Purchase failed", error);
         alert(`Purchase failed: ${error?.message || 'Unknown error'}. Please try again.`);
-=======
-        }
-      } catch (error) {
-        console.error("App: Native Purchase failed", error);
-        alert("Purchase failed. Please try again.");
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
       } finally {
         setIsUpgrading(false);
       }
@@ -697,10 +585,7 @@ export default function App() {
 
     // Fallback to Stripe for Web
     try {
-<<<<<<< HEAD
       console.log("App: Falling back to Stripe checkout session...");
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -814,11 +699,7 @@ Core: ${cableCoreType}
 Load: ${loadKw} kW
 Length: ${lengthM} m
 Cable: ${result.cableSize} mm²
-<<<<<<< HEAD
 Device: ${result.protectiveDevice} A (${deviceType})
-=======
-Device: ${result.protectiveDevice} A
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 V-Drop: ${result.voltageDrop.toFixed(2)}V (${result.voltageDropPercentage.toFixed(1)}%)
 Status: ${result.isCompliant ? '✅ COMPLIANT' : '❌ NON-COMPLIANT'}
 --------------------------------
@@ -979,7 +860,6 @@ Calculated via BS7671 Field Toolkit
         </div>
         {!effectiveIsPro && (
           <button 
-<<<<<<< HEAD
             onClick={handleUpgrade}
             className="bg-emerald-500/10 text-emerald-500 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
           >
@@ -988,22 +868,6 @@ Calculated via BS7671 Field Toolkit
           </button>
         )}
       </div>
-=======
-  onClick={(e) => {
-    e.stopPropagation();
-    handleUpgrade();
-  }}
-  disabled={isUpgrading}
-  className="bg-black text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-zinc-900 transition-colors disabled:opacity-50 flex items-center gap-2"
->
-  {isUpgrading ? (
-    <>
-      <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-      Processing...
-    </>
-  ) : "Start Free Trial"}
-</button>
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 
       {/* Regulatory Status Card */}
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border mb-2">
@@ -1012,7 +876,6 @@ Calculated via BS7671 Field Toolkit
             <CheckCircle2 className="text-emerald-500" size={18} />
             <h3 className="font-bold text-white">BS 7671 Compliance</h3>
           </div>
-<<<<<<< HEAD
           <button 
             onClick={async () => {
               setIsCheckingUpdates(true);
@@ -1032,36 +895,6 @@ Calculated via BS7671 Field Toolkit
           >
             {isCheckingUpdates ? 'Checking...' : 'Check for Updates'}
           </button>
-=======
-          {!hasApiKey ? (
-            <button 
-              onClick={handleSelectKey}
-              className="text-[10px] font-bold text-orange-500 uppercase tracking-widest hover:text-orange-400 transition-colors"
-            >
-              Setup API Key
-            </button>
-          ) : (
-            <button 
-              onClick={async () => {
-                setIsCheckingUpdates(true);
-                try {
-                  const updates = await checkRegulatoryUpdates();
-                  setRegulatoryInfo(updates);
-                } catch (error: any) {
-                  if (error?.message?.includes("Requested entity was not found")) {
-                    setHasApiKey(false);
-                  }
-                } finally {
-                  setIsCheckingUpdates(false);
-                }
-              }}
-              disabled={isCheckingUpdates}
-              className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors disabled:opacity-50"
-            >
-              {isCheckingUpdates ? 'Checking...' : 'Check for Updates'}
-            </button>
-          )}
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         </div>
         
         {!hasApiKey && (
@@ -1309,7 +1142,6 @@ Calculated via BS7671 Field Toolkit
             <Crown size={120} />
           </div>
           <div className="relative z-10">
-<<<<<<< HEAD
             <h3 className="text-3xl font-black mb-2 uppercase tracking-tighter">1 Month Free Trial</h3>
             <p className="font-bold text-black/70 mb-6 max-w-md">Try the full BS 7671 engineering suite for free. No commitment, cancel anytime. Just £5.99/mo after trial.</p>
             <button 
@@ -1317,11 +1149,6 @@ Calculated via BS7671 Field Toolkit
                 e.stopPropagation();
                 handleUpgrade();
               }}
-=======
-            <h3 className="text-3xl font-black mb-2">GO PRO</h3>
-            <p className="font-bold text-black/70 mb-6 max-w-md">Unlock the full BS 7671 engineering suite and professional reporting tools.</p>
-            <button 
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
               disabled={isUpgrading}
               className="bg-black text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-zinc-900 transition-colors disabled:opacity-50 flex items-center gap-2"
             >
@@ -1331,11 +1158,7 @@ Calculated via BS7671 Field Toolkit
                   Processing...
                 </>
               ) : (
-<<<<<<< HEAD
                 'Start Free Trial'
-=======
-                'Upgrade Now • £5.99'
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
               )}
             </button>
           </div>
@@ -1355,24 +1178,12 @@ Calculated via BS7671 Field Toolkit
             </p>
             <p className="text-gray-700 text-[8px] uppercase tracking-widest">BS7671 Field Toolkit v1.0.2</p>
           </div>
-<<<<<<< HEAD
-=======
-          {!isSyncing && (
-            <button 
-              onClick={() => setIsAuthLoading(false)}
-              className="mt-8 text-gray-700 text-[8px] uppercase tracking-widest hover:text-emerald-500 transition-colors border border-white/5 px-4 py-2 rounded-full"
-            >
-              Skip Loading (Debug)
-            </button>
-          )}
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         </div>
       </div>
     );
   }
 
   return (
-<<<<<<< HEAD
     <div className={`min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30`}>
       {/* Header */}
       {!cleanMode && (
@@ -1430,53 +1241,6 @@ Calculated via BS7671 Field Toolkit
       )}
 
       <main className={`max-w-md mx-auto p-6 ${cleanMode ? 'pb-6' : 'pb-24'}`}>
-=======
-    <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30">
-      {/* Header */}
-      <header id="main-header" className="bg-[#0a0a0a]/80 backdrop-blur-md border-b border-white/5 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 sticky top-0 z-20">
-        <div className="max-w-md mx-auto flex items-center justify-between">
-          <div id="header-logo" className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
-            <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
-              <Zap size={18} fill="currentColor" />
-            </div>
-            <h1 className="font-bold text-lg tracking-tight">BS7671 Field Toolkit</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            {effectiveIsPro && (
-              <div id="pro-badge" className="bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded border border-emerald-500/20 text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
-                <Star size={8} fill="currentColor" />
-                Pro
-              </div>
-            )}
-            {user ? (
-              <button id="settings-button" onClick={() => setShowSettingsModal(true)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
-                {user.photoURL ? (
-                 <img src="/icons/icon-192.webp" alt="App Icon" className="w-full h-full object-cover" />
-                ) : (
-                  <UserIcon size={20} className="text-gray-400" />
-                )}
-              </button>
-            ) : (
-              <div className="flex items-center gap-1">
-                <button id="login-button-google" onClick={() => handleLogin('google')} className="p-2 hover:bg-white/5 rounded-full transition-colors" title="Sign in with Google">
-                  <LogIn size={20} className="text-gray-400" />
-                </button>
-                <button id="login-button-apple" onClick={() => handleLogin('apple')} className="p-2 hover:bg-white/5 rounded-full transition-colors" title="Sign in with Apple">
-                  <Apple size={20} className="text-gray-400" />
-                </button>
-              </div>
-            )}
-            {mode !== AppMode.HOME && (
-              <button id="home-nav-button" onClick={goHome} className="p-2 hover:bg-white/5 rounded-full transition-colors">
-                <LayoutGrid size={20} className="text-gray-400" />
-              </button>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-md mx-auto p-6 pb-24">
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         <AnimatePresence mode="wait">
           {mode === AppMode.HOME ? (
             renderHome()
@@ -1610,7 +1374,6 @@ Calculated via BS7671 Field Toolkit
                 // Future: logic to load history item back into calculator
               }} />
             </motion.div>
-<<<<<<< HEAD
           ) : mode === AppMode.PRIVACY ? (
             <motion.div
               key={mode}
@@ -1749,8 +1512,6 @@ Calculated via BS7671 Field Toolkit
                 </div>
               </div>
             </motion.div>
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
           ) : (
             <motion.div
               key={mode}
@@ -2110,10 +1871,7 @@ Calculated via BS7671 Field Toolkit
                             <div className="flex items-baseline gap-1">
                               <span className="text-3xl font-mono font-bold">{result.protectiveDevice}</span>
                               <span className="text-xs font-bold text-emerald-500">A</span>
-<<<<<<< HEAD
                               <span className="block text-[8px] text-gray-500 uppercase font-bold tracking-widest mt-1">{deviceType}</span>
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                             </div>
                           </div>
                         </div>
@@ -2227,7 +1985,6 @@ Calculated via BS7671 Field Toolkit
       </main>
 
       {/* Navigation Bar (Mobile Style) */}
-<<<<<<< HEAD
       {!cleanMode && (
         <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a]/80 backdrop-blur-xl border-t border-white/5 px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] z-20">
           <div className="max-w-md mx-auto flex justify-around items-center">
@@ -2250,28 +2007,6 @@ Calculated via BS7671 Field Toolkit
           </div>
         </nav>
       )}
-=======
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a]/80 backdrop-blur-xl border-t border-white/5 px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] z-20">
-        <div className="max-w-md mx-auto flex justify-around items-center">
-          <button onClick={goHome} className={`flex flex-col items-center gap-1 ${mode === AppMode.HOME ? 'text-emerald-500' : 'text-gray-500'}`}>
-            <LayoutGrid size={20} />
-            <span className="text-[10px] font-bold uppercase">Home</span>
-          </button>
-          <button onClick={() => handleModeChange(AppMode.SMART_CIRCUIT)} className={`flex flex-col items-center gap-1 ${mode === AppMode.SMART_CIRCUIT ? 'text-emerald-500' : 'text-gray-500'}`}>
-            <Calculator size={20} />
-            <span className="text-[10px] font-bold uppercase">Design</span>
-          </button>
-          <button onClick={() => handleModeChange(AppMode.CABLE_FINDER)} className={`flex flex-col items-center gap-1 ${mode === AppMode.CABLE_FINDER ? 'text-emerald-500' : 'text-gray-500'}`}>
-            <Search size={20} />
-            <span className="text-[10px] font-bold uppercase">Finder</span>
-          </button>
-          <button onClick={() => handleModeChange(AppMode.HISTORY)} className={`flex flex-col items-center gap-1 ${mode === AppMode.HISTORY ? 'text-emerald-500' : 'text-gray-500'}`}>
-            <HistoryIcon size={20} />
-            <span className="text-[10px] font-bold uppercase">History</span>
-          </button>
-        </div>
-      </nav>
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 
       <AnimatePresence>
         {showShareMenu && (
@@ -2585,7 +2320,6 @@ Calculated via BS7671 Field Toolkit
                 )}
 
                 <div className="space-y-2">
-<<<<<<< HEAD
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Display Options</p>
                   <button 
                     onClick={() => {
@@ -2621,14 +2355,10 @@ Calculated via BS7671 Field Toolkit
                     <span className="text-sm font-medium">Privacy Policy (In-App)</span>
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
-=======
-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Legal & Support</p>
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                   <button 
                     onClick={() => window.open(PRIVACY_POLICY_URL, '_blank')}
                     className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
                   >
-<<<<<<< HEAD
                     <span className="text-sm font-medium">Privacy Policy (External)</span>
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
@@ -2640,9 +2370,6 @@ Calculated via BS7671 Field Toolkit
                     className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
                   >
                     <span className="text-sm font-medium">Account Deletion Info</span>
-=======
-                    <span className="text-sm font-medium">Privacy Policy</span>
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
                   <button 
@@ -2797,11 +2524,7 @@ Calculated via BS7671 Field Toolkit
                     Processing...
                   </>
                 ) : (
-<<<<<<< HEAD
                   'Start 1 Month Free Trial'
-=======
-                  'Upgrade to Pro • £5.99'
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                 )}
               </button>
               
@@ -2812,7 +2535,6 @@ Calculated via BS7671 Field Toolkit
                 >
                   Restore Purchases
                 </button>
-<<<<<<< HEAD
 
                 <div className="flex items-center gap-4">
                   <button 
@@ -2832,11 +2554,6 @@ Calculated via BS7671 Field Toolkit
                 
                 <p className="text-[8px] text-gray-600 text-center leading-relaxed max-w-[280px]">
                   Payment of £5.99/mo will be charged to your account after the 1 month free trial.
-=======
-                
-                <p className="text-[8px] text-gray-600 text-center leading-relaxed max-w-[280px]">
-                  Payment will be charged to your account at confirmation of purchase. 
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                   Subscription automatically renews unless auto-renew is turned off at least 24-hours before the end of the current period.
                   Manage your subscription in your Account Settings.
                 </p>
@@ -2851,7 +2568,6 @@ Calculated via BS7671 Field Toolkit
             </motion.div>
           </div>
         )}
-<<<<<<< HEAD
 
         {showLoginModal && (
           <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-4">
@@ -2979,8 +2695,6 @@ Calculated via BS7671 Field Toolkit
             </motion.div>
           </div>
         )}
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
       </AnimatePresence>
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
@@ -2997,3 +2711,5 @@ Calculated via BS7671 Field Toolkit
     </div>
   );
 }
+
+// End of BS7671 Field Toolkit components
