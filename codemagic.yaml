@@ -20,9 +20,11 @@ workflows:
     scripts:
       - name: Install dependencies
         script: |
-          npm install
+          # Use clean-install and force resolution for problematic v4 tailwind modules
+          npm install --legacy-peer-deps
       - name: Build web app
         script: |
+          # Ensure node_modules are present and build the production assets
           npm run build
       - name: Create Native Project & Fix Dependencies
         script: |
@@ -138,36 +140,95 @@ workflows:
                   with open('/tmp/profile.id', 'w') as f: f.write(pid)
                   
                   # 4. Sync App Metadata (Beta Review Info)
-                  Ad_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]={app_id}", headers=headers)
-                  ad = ad_resp.json()
-                  if ad.get('data'):
-                      aid = ad['data'][0]['id']
-                      # Beta App Review Detail
-                      rd_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers)
-                      rd = rd_resp.json()
-                      review_attr = {
-                          "contactFirstName": os.environ.get('BETA_CONTACT_FIRST_NAME', 'Tommy'), 
-                          "contactLastName": os.environ.get('BETA_CONTACT_LAST_NAME', 'Holm'), 
-                          "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+4500000000'), 
-                          "contactEmail": os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com'),
-                          "demoAccountRequired": False
-                      }
-                      if rd.get('data'):
-                          rid = rd['data']['id']
-                          requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{rid}", headers=headers, json={"data": {"id": rid, "type": "betaAppReviewDetails", "attributes": review_attr}})
+                  print("Syncing App Beta Metadata...")
+                  import traceback
+                  try:
+                      ad_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]={app_id}", headers=headers)
+                      ad = ad_resp.json()
+                      if ad.get('data'):
+                          aid = ad['data'][0]['id']
+                          print(f"App ID Found: {aid}")
+                          
+                          # Beta App Review Detail
+                          print("Fetching/Updating Beta App Review Detail...")
+                          rd_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers)
+                          rd = rd_resp.json()
+                          review_attr = {
+                              "contactFirstName": os.environ.get('BETA_CONTACT_FIRST_NAME', 'Tommy'), 
+                              "contactLastName": os.environ.get('BETA_CONTACT_LAST_NAME', 'Holm'), 
+                              "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+447802431919'), 
+                              "contactEmail": os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com'),
+                              "demoAccountRequired": False
+                          }
+                          
+                          if rd.get('data'):
+                              rid = rd['data']['id']
+                              print(f"Patching existing Review Detail {rid}...")
+                              p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{rid}", headers=headers, json={"data": {"id": rid, "type": "betaAppReviewDetails", "attributes": review_attr}})
+                              print(f"Patch Review Detail Status: {p_res.status_code}")
+                              if p_res.status_code > 299: print(f"Patch Error: {p_res.text}")
+                          else:
+                              print("Review detail not found - creating...")
+                              c_res = requests.post("https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails", headers=headers, json={
+                                  "data": {
+                                      "type": "betaAppReviewDetails",
+                                      "attributes": review_attr,
+                                      "relationships": {"app": {"data": {"type": "apps", "id": aid}}}
+                                  }
+                              })
+                              print(f"Create Review Detail Status: {c_res.status_code}")
+                              if c_res.status_code > 299: print(f"Create Error: {c_res.text}")
+                          
+                          # Beta Localization (Feedback Email)
+                          print("Fetching/Updating Beta Localizations...")
+                          f_email = os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com')
+                          b_desc = os.environ.get('BETA_DESCRIPTION', 'Field toolkit for BS7671 compliance.')
+                          
+                          # Get Primary Locale
+                          app_info = ad['data'][0]['attributes']
+                          p_locale = app_info.get('primaryLocale', 'en-US')
+                          print(f"App Primary Locale: {p_locale}")
+                          
+                          locs_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers)
+                          locs = locs_resp.json()
+                          
+                          has_p_locale = False
+                          if locs.get('data'):
+                              for loc in locs['data']:
+                                  lid = loc['id']
+                                  loc_attr = loc['attributes']
+                                  current_locale = loc_attr.get('locale')
+                                  if current_locale == p_locale: has_p_locale = True
+                                  
+                                  print(f"Patching Localization {lid} ({current_locale})...")
+                                  p_res = requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": f_email, "description": b_desc}}})
+                                  print(f"Patch Localization Status: {p_res.status_code}")
+                                  if p_res.status_code > 299: print(f"Patch Error: {p_res.text}")
+                          
+                          if not has_p_locale:
+                              print(f"Primary localization ({p_locale}) not found - creating...")
+                              c_res = requests.post("https://api.appstoreconnect.apple.com/v1/betaAppLocalizations", headers=headers, json={
+                                  "data": {
+                                      "type": "betaAppLocalizations",
+                                      "attributes": {"locale": p_locale, "feedbackEmail": f_email, "description": b_desc},
+                                      "relationships": {"app": {"data": {"type": "apps", "id": aid}}}
+                                  }
+                              })
+                              print(f"Create Localization Status: {c_res.status_code}")
+                              if c_res.status_code > 299: print(f"Create Error: {c_res.text}")
+                          
+                          # Final Verification Check
+                          v_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppReviewDetail", headers=headers).json()
+                          print(f"VERIFICATION: Review Contact Email is {v_resp.get('data', {}).get('attributes', {}).get('contactEmail')}")
                       else:
-                          requests.post("https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails", headers=headers, json={"data": {"type": "betaAppReviewDetails", "attributes": review_attr, "relationships": {"app": {"data": {"type": "apps", "id": aid}}}}})
-                      
-                      # Beta Localization
-                      locs_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/apps/{aid}/betaAppLocalizations", headers=headers)
-                      locs = locs_resp.json()
-                      if locs.get('data'):
-                          for loc in locs['data']:
-                              lid = loc['id']
-                              requests.patch(f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations/{lid}", headers=headers, json={"data": {"id": lid, "type": "betaAppLocalizations", "attributes": {"feedbackEmail": os.environ.get('BETA_FEEDBACK_EMAIL'), "description": os.environ.get('BETA_DESCRIPTION')}}})
+                          print(f"Error: App with bundle ID {app_id} not found.")
+                  except Exception as e:
+                      print(f"Metadata Sync Exception: {e}")
+                      traceback.print_exc()
+                  
                   print("Sync completed.")
               except Exception as e:
-                  print(f"Sync Exception: {e}")
+                  print(f"Fatal Python Error: {e}")
                   sys.exit(1)
           portal_sync()
           EOF
@@ -198,9 +259,11 @@ workflows:
       - name: Increment Build Number
         script: |
           PBXPROJ=$(find ios/App/App.xcodeproj -name "project.pbxproj")
+          echo "--- Setting Build Number to $BUILD_NUMBER ---"
           sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9.]*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" "$PBXPROJ"
       - name: Build iOS app
         script: |
+          # Use local ExportOptions.plist for precise control
           cat > ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -227,15 +290,24 @@ workflows:
       - name: Upload to TestFlight
         script: |
           echo "--- Submitting to App Store Connect ---"
+          # Wait for metadata sync to propagate
           sleep 30
-          # Use the app-store-connect CLI to publish manually
+          # Manually upload using CLI to keep keys hidden from YAML validation
           APP_STORE_CONNECT_BIN=$(dirname $(which python3))/app-store-connect
+          # Re-format private key and key ID for CLI
           export APP_STORE_CONNECT_PRIVATE_KEY=$(echo "$APP_STORE_CONNECT_PRIVATE_KEY" | sed 's/\\n/\n/g')
           if [ -z "$APP_STORE_CONNECT_KEY_ID" ] && [ -n "$APP_STORE_CONNECT_KEY_IDENTIFIER" ]; then
             export APP_STORE_CONNECT_KEY_ID="$APP_STORE_CONNECT_KEY_IDENTIFIER"
           fi
+          
           IPA_PATH=$(ls build/ios/ipa/*.ipa | head -1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "ERROR: No IPA found to upload."
+            exit 1
+          fi
+          
           $APP_STORE_CONNECT_BIN publish \
+            --log-api-calls \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_ID" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY" \
