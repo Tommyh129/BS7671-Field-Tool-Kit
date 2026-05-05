@@ -10,12 +10,9 @@ export enum AppMode {
   MAX_LENGTH = 'MAX_LENGTH',
   EARTH_ELECTRODE = 'EARTH_ELECTRODE',
   HISTORY = 'HISTORY',
-<<<<<<< HEAD
   PRIVACY = 'PRIVACY',
   ACCOUNT_DELETION = 'ACCOUNT_DELETION',
   SUPPORT = 'SUPPORT',
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 }
 
 export enum SupplySystem {
