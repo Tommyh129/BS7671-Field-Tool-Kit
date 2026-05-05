@@ -30,15 +30,11 @@ import {
   Apple,
   User as UserIcon,
   FileText,
-<<<<<<< HEAD
   History as HistoryIcon,
   Mail,
   Eye,
   EyeOff,
   Star as StarIcon
-=======
-  History as HistoryIcon
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
