@@ -1,11 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Ruler, Share2, Activity, AlertTriangle, CheckCircle2, History as HistoryIcon, Check, LogIn } from 'lucide-react';
-<<<<<<< HEAD
 import { DeviceType, CableType } from '../types';
-=======
-import { DeviceType } from '../types';
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 import { DEVICE_LIMITS, CABLE_DATABASE, VOLTAGES } from '../constants';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
@@ -17,10 +13,7 @@ interface MaxLengthCalculatorProps {
 
 export default function MaxLengthCalculator({ onShare }: MaxLengthCalculatorProps) {
   const [deviceType, setDeviceType] = useState<DeviceType>(DeviceType.MCB_B);
-<<<<<<< HEAD
   const [cableType, setCableType] = useState<CableType>(CableType.PVC_PVC);
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   const [rating, setRating] = useState<number>(32);
   const [cableSize, setCableSize] = useState<string>('2.5');
   const [ze, setZe] = useState<string>('0.35');
@@ -37,12 +30,7 @@ export default function MaxLengthCalculator({ onShare }: MaxLengthCalculatorProp
     const lengthVal = parseFloat(enteredLength) || 0;
 
     // Find mV/A/m for the cable size
-<<<<<<< HEAD
     const cableData = CABLE_DATABASE[cableType]?.find(c => c.size === sizeVal);
-=======
-    // We'll use PVC_PVC as default for lookup
-    const cableData = CABLE_DATABASE['70°C PVC (Twin & Earth)' as any]?.find(c => c.size === sizeVal);
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
     const mvAm = cableData?.mvAm || 18; // Default to 2.5mm2 value if not found
 
     // Find Zs limit
@@ -81,12 +69,8 @@ export default function MaxLengthCalculator({ onShare }: MaxLengthCalculatorProp
 📏 MAX CABLE LENGTH CALCULATION 📏
 -------------------------
 Device: ${deviceType} ${rating}A
-<<<<<<< HEAD
 Cable Type: ${cableType}
 Cable Size: ${cableSize}mm²
-=======
-Cable: ${cableSize}mm²
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 Ze: ${ze} Ω
 Load: ${loadAmps} A
 Allowed VD: ${allowedVD}%
@@ -123,13 +107,8 @@ Calculated via BS7671 Field Toolkit
       await saveCalculation(
         auth.currentUser!.uid,
         'max_length',
-<<<<<<< HEAD
         `Max Length: ${deviceType} ${rating}A / ${cableType} ${cableSize}mm²`,
         { deviceType, cableType, rating, cableSize, ze, allowedVD, loadAmps, enteredLength },
-=======
-        `Max Length: ${deviceType} ${rating}A / ${cableSize}mm²`,
-        { deviceType, rating, cableSize, ze, allowedVD, loadAmps, enteredLength },
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         { maxLen: calculation.maxLen, limitingFactor: calculation.limitingFactor, isCompliant: calculation.isCompliant }
       );
       setTimeout(() => setIsSavingHistory(false), 2000);
@@ -143,7 +122,6 @@ Calculated via BS7671 Field Toolkit
     <div className="space-y-6">
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <div className="space-y-4">
-<<<<<<< HEAD
           <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Cable Type</label>
@@ -159,8 +137,6 @@ Calculated via BS7671 Field Toolkit
             </div>
           </div>
 
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Device Type</label>
@@ -196,13 +172,8 @@ Calculated via BS7671 Field Toolkit
                 onChange={(e) => setCableSize(e.target.value)}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
               >
-<<<<<<< HEAD
                 {[...CABLE_DATABASE[cableType]].sort((a, b) => a.size - b.size).map(c => (
                   <option key={c.size} value={c.size}>{c.size}mm²</option>
-=======
-                {[1.0, 1.5, 2.5, 4.0, 6.0, 10.0, 16.0].map(s => (
-                  <option key={s} value={s}>{s}mm²</option>
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
                 ))}
               </select>
             </div>
