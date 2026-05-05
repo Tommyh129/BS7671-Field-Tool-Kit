@@ -20,7 +20,8 @@ workflows:
     scripts:
       - name: Install dependencies
         script: |
-          npm install
+          # Force install dev dependencies which include build tools like @tailwindcss/vite
+          npm install --include=dev
       - name: Build web app
         script: |
           npm run build
