@@ -20,8 +20,7 @@ workflows:
     scripts:
       - name: Install dependencies
         script: |
-          # Use --include=dev to ensure @tailwindcss/vite and other build tools are installed
-          npm install --include=dev
+          npm install
       - name: Build web app
         script: |
           npm run build
