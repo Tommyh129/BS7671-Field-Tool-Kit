@@ -16,7 +16,6 @@
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     user-select: none;
-<<<<<<< HEAD
     /* Hide scrollbar for Chrome, Safari and Opera */
     &::-webkit-scrollbar {
       display: none;
@@ -24,15 +23,12 @@
     /* Hide scrollbar for IE, Edge and Firefox */
     -ms-overflow-style: none;  /* IE and Edge */
     scrollbar-width: none;  /* Firefox */
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   }
   
   body {
     @apply bg-hardware-bg text-white font-sans antialiased;
     min-height: 100vh;
     min-height: -webkit-fill-available;
-<<<<<<< HEAD
     /* Hide scrollbar for Chrome, Safari and Opera */
     &::-webkit-scrollbar {
       display: none;
@@ -40,8 +36,6 @@
     /* Hide scrollbar for IE, Edge and Firefox */
     -ms-overflow-style: none;  /* IE and Edge */
     scrollbar-width: none;  /* Firefox */
-=======
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   }
 
   input {
@@ -59,22 +53,10 @@
   }
 }
 
-<<<<<<< HEAD
 .custom-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 .custom-scrollbar::-webkit-scrollbar {
   display: none;
-=======
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 }
