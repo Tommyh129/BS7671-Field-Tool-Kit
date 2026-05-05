@@ -2,7 +2,7 @@
   "name": "react-example",
   "private": true,
   "version": "1.1.1",
-  "comment": "Final fix for merge conflicts",
+  "comment": "Final fix for build and merge conflicts",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
