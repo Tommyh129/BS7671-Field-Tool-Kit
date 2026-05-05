@@ -20,11 +20,9 @@ workflows:
     scripts:
       - name: Install dependencies
         script: |
-          # Use clean-install and force resolution for problematic v4 tailwind modules
-          npm install --legacy-peer-deps
+          npm install --include=dev
       - name: Build web app
         script: |
-          # Ensure node_modules are present and build the production assets
           npm run build
       - name: Create Native Project & Fix Dependencies
         script: |
@@ -156,7 +154,7 @@ workflows:
                           review_attr = {
                               "contactFirstName": os.environ.get('BETA_CONTACT_FIRST_NAME', 'Tommy'), 
                               "contactLastName": os.environ.get('BETA_CONTACT_LAST_NAME', 'Holm'), 
-                              "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+447802431919'), 
+                              "contactPhone": os.environ.get('BETA_CONTACT_PHONE', '+4500000000'), 
                               "contactEmail": os.environ.get('BETA_FEEDBACK_EMAIL', 'tommyholm97@gmail.com'),
                               "demoAccountRequired": False
                           }
