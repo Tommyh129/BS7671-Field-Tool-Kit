@@ -33,8 +33,10 @@ workflows:
             exit 1
           fi
           rm -rf ios
-          echo "{\"appId\": \"$APP_ID\", \"appName\": \"App\", \"webDir\": \"dist\"}" > capacitor.config.json
+          echo "{\"appId\": \"$APP_ID\", \"appName\": \"BS7671 Field Toolkit\", \"webDir\": \"dist\"}" > capacitor.config.json
           npx cap add ios || true
+          npm run assets:generate
+          test -f ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
           # Force deployment target to 15.0 for compatibility
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
