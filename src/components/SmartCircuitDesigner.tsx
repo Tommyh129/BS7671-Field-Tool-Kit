@@ -79,11 +79,7 @@ Supply: ${supplySystem} (Ze: ${zeValue}Ω)
 
 RESULTS:
 - Cable Size: ${result.cableSize}mm²${result.cpcSize ? ` (Line) / ${result.cpcSize}mm² (CPC)` : ''}
-<<<<<<< HEAD
 - Protective Device: ${result.protectiveDevice}A (${deviceType})
-=======
-- Protective Device: ${result.protectiveDevice}A (Type B)
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
 - Voltage Drop: ${result.voltageDropPercentage.toFixed(2)}% (${result.isCompliant ? 'PASS' : 'FAIL'})
 - Zs: ${result.zs?.toFixed(2)}Ω (${result.zsCompliant ? 'PASS' : 'FAIL'})
 
@@ -314,11 +310,7 @@ Calculated via BS7671 Field Toolkit
               <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50">
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Protective Device</p>
                 <p className="text-2xl font-mono font-bold text-white">{result.protectiveDevice}A</p>
-<<<<<<< HEAD
                 <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mt-1">{deviceType}</p>
-=======
-                <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mt-1">MCB Type B</p>
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
               </div>
               <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50">
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Voltage Drop</p>

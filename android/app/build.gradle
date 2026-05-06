@@ -7,13 +7,8 @@ android {
         applicationId "com.bs7671.fieldtoolkit"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-<<<<<<< HEAD
         versionCode 2
         versionName "1.0.1"
-=======
-        versionCode 1
-        versionName "1.0"
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

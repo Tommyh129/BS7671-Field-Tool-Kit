@@ -1,9 +1,5 @@
 {
   "name": "BS7671 Field Toolkit Pro",
-<<<<<<< HEAD
   "description": "Professional BS 7671 electrical mobile calculation suite for field engineers. Includes circuit design, Zs calculations, and more.",
-=======
-  "description": "Professional BS 7671 electrical calculation suite for field engineers. Includes circuit design, Zs calculations, and more.",
->>>>>>> 34342a05d2be667a7f620817b3b9dade520aded3
   "requestFramePermissions": []
 }
