@@ -246,6 +246,7 @@ export default function App() {
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const shareRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
+  const lastSavedHistoryRef = useRef<string | null>(null);
 
   // --- Regulatory Logic ---
   useEffect(() => {
@@ -800,15 +801,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!user) {
-      handleLogin();
-      return;
-    }
     if (!result || isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        user.uid,
+        user?.uid,
         'circuit',
         `Circuit: ${loadKw}kW / ${lengthM}m`,
         { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType },
@@ -828,6 +825,32 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    if (!result || !showResults) return;
+
+    const payload = {
+      type: 'circuit' as const,
+      title: `Circuit: ${loadKw}kW / ${lengthM}m`,
+      inputs: { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType },
+      results: {
+        cableSize: result.cableSize,
+        protectiveDevice: result.protectiveDevice,
+        voltageDrop: result.voltageDrop,
+        voltageDropPercentage: result.voltageDropPercentage,
+        isCompliant: result.isCompliant,
+        zs: result.zs,
+        maxZs: result.maxZs
+      }
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(user?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving circuit history:', error);
+    });
+  }, [result, showResults, loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType, user]);
 
   const goHome = () => {
     setMode(AppMode.HOME);
@@ -1967,17 +1990,8 @@ Calculated via BS7671 Field Toolkit
                       disabled={isSavingHistory}
                       className="flex-1 bg-emerald-500/10 border border-emerald-500/20 py-5 rounded-3xl font-bold text-emerald-500 hover:bg-emerald-500/20 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                     >
-                      {!user ? (
-                        <>
-                          <LogIn size={18} />
-                          Login to Save
-                        </>
-                      ) : (
-                        <>
-                          {isSavingHistory ? <Check size={18} /> : <HistoryIcon size={18} />}
-                          {isSavingHistory ? 'Saved' : 'Save History'}
-                        </>
-                      )}
+                      {isSavingHistory ? <Check size={18} /> : <HistoryIcon size={18} />}
+                      {isSavingHistory ? 'Saved' : 'Save History'}
                     </button>
                   </div>
 

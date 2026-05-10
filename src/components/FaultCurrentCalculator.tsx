@@ -1,9 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Activity, Zap, AlertTriangle, CheckCircle2, Share2, History as HistoryIcon, Check, LogIn } from 'lucide-react';
+import { Activity, Zap, AlertTriangle, CheckCircle2, Share2, History as HistoryIcon, Check } from 'lucide-react';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 interface FaultCurrentCalculatorProps {
   onShare: (text: string) => void;
@@ -15,6 +14,7 @@ export default function FaultCurrentCalculator({ onShare }: FaultCurrentCalculat
   const [phaseType, setPhaseType] = useState<'single' | 'three'>('single');
   const [breakingCapacity, setBreakingCapacity] = useState<string>('6000'); // 6kA default
   const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   const calculation = useMemo(() => {
     const vVal = parseFloat(voltage) || 0;
@@ -58,21 +58,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!auth.currentUser) {
-      try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error('Login failed:', error);
-        return;
-      }
-    }
-    
     if (!calculation || isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        auth.currentUser!.uid,
+        auth.currentUser?.uid,
         'fault',
         `PFC: ${calculation.ka.toFixed(2)}kA`,
         { voltage, zs, phaseType, breakingCapacity },
@@ -84,6 +74,24 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    if (!calculation) return;
+
+    const payload = {
+      type: 'fault' as const,
+      title: `PFC: ${calculation.ka.toFixed(2)}kA`,
+      inputs: { voltage, zs, phaseType, breakingCapacity },
+      results: { amps: calculation.amps, ka: calculation.ka, isAdequate: calculation.isAdequate }
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving fault current history:', error);
+    });
+  }, [calculation, voltage, zs, phaseType, breakingCapacity]);
 
   return (
     <div className="space-y-6">
@@ -212,17 +220,8 @@ Calculated via BS7671 Field Toolkit
                 disabled={isSavingHistory}
                 className="flex-1 flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500 disabled:opacity-50"
               >
-                {!auth.currentUser ? (
-                  <>
-                    <LogIn size={14} />
-                    Login to Save
-                  </>
-                ) : (
-                  <>
-                    {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
-                    {isSavingHistory ? 'Saved' : 'Save History'}
-                  </>
-                )}
+                {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
+                {isSavingHistory ? 'Saved' : 'Save History'}
               </button>
             </div>
           </div>

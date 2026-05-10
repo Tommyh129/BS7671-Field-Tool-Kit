@@ -1,9 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Share2, Activity, ArrowRightLeft, History as HistoryIcon, Check, LogIn } from 'lucide-react';
+import { Zap, Share2, Activity, ArrowRightLeft, History as HistoryIcon, Check } from 'lucide-react';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 interface ThreePhaseCalculatorProps {
   onShare: (text: string) => void;
@@ -17,6 +16,7 @@ export default function ThreePhaseCalculator({ onShare }: ThreePhaseCalculatorPr
   const [pf, setPf] = useState<string>('0.85');
   const [calcDirection, setCalcDirection] = useState<'toPower' | 'toCurrent'>('toPower');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   const calculation = useMemo(() => {
     const vVal = parseFloat(voltage) || 400;
@@ -72,21 +72,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!auth.currentUser) {
-      try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error('Login failed:', error);
-        return;
-      }
-    }
-    
     if (!calculation || isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        auth.currentUser!.uid,
+        auth.currentUser?.uid,
         'three-phase',
         `${phaseType === 'three' ? '3-Phase' : '1-Phase'}: ${calcDirection === 'toPower' ? calculation.power.toFixed(2) + 'kW' : calculation.current.toFixed(2) + 'A'}`,
         { voltage, current, power, pf, calcDirection, phaseType },
@@ -98,6 +88,25 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    const hasInput = calcDirection === 'toPower' ? (parseFloat(current) || 0) > 0 : (parseFloat(power) || 0) > 0;
+    if (!hasInput || !calculation) return;
+
+    const payload = {
+      type: 'three-phase' as const,
+      title: `${phaseType === 'three' ? '3-Phase' : '1-Phase'}: ${calcDirection === 'toPower' ? calculation.power.toFixed(2) + 'kW' : calculation.current.toFixed(2) + 'A'}`,
+      inputs: { voltage, current, power, pf, calcDirection, phaseType },
+      results: { power: calculation.power, current: calculation.current, voltage: calculation.voltage, pf: calculation.pf, phaseType }
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving power calculator history:', error);
+    });
+  }, [calculation, voltage, current, power, pf, calcDirection, phaseType]);
 
   const togglePhase = () => {
     const newPhase = phaseType === 'three' ? 'single' : 'three';
@@ -246,17 +255,8 @@ Calculated via BS7671 Field Toolkit
                 disabled={isSavingHistory}
                 className="flex-1 flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500 disabled:opacity-50"
               >
-                {!auth.currentUser ? (
-                  <>
-                    <LogIn size={14} />
-                    Login to Save
-                  </>
-                ) : (
-                  <>
-                    {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
-                    {isSavingHistory ? 'Saved' : 'Save History'}
-                  </>
-                )}
+                {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
+                {isSavingHistory ? 'Saved' : 'Save History'}
               </button>
             </div>
           </div>

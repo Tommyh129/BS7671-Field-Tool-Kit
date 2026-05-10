@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { CalculationHistory } from '../types';
 import { getHistory, deleteHistoryItem } from '../services/historyService';
-import { auth } from '../firebase';
 
 interface HistoryProps {
   onSelect: (item: CalculationHistory) => void;
@@ -32,14 +31,8 @@ export default function History({ onSelect }: HistoryProps) {
 
   useEffect(() => {
     const fetchHistory = async () => {
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        setLoading(false);
-        return;
-      }
-      
       try {
-        const data = await getHistory(currentUser.uid);
+        const data = await getHistory();
         setHistory(data);
       } catch (error) {
         console.error('Error fetching history:', error);
@@ -49,13 +42,15 @@ export default function History({ onSelect }: HistoryProps) {
     };
 
     fetchHistory();
-  }, [auth.currentUser]);
+
+    window.addEventListener('bs7671-history-updated', fetchHistory);
+    return () => window.removeEventListener('bs7671-history-updated', fetchHistory);
+  }, []);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!auth.currentUser) return;
     try {
-      await deleteHistoryItem(auth.currentUser.uid, id);
+      await deleteHistoryItem(null, id);
       setHistory(prev => prev.filter(item => item.id !== id));
       if (selectedItem?.id === id) setSelectedItem(null);
     } catch (error) {

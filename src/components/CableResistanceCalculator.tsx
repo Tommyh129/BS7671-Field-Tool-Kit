@@ -1,10 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Ruler, Share2, Activity, History as HistoryIcon, Check, LogIn } from 'lucide-react';
+import { Ruler, Share2, Activity, History as HistoryIcon, Check } from 'lucide-react';
 import { CABLE_RESISTANCE } from '../constants';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 interface CableResistanceCalculatorProps {
   onShare: (text: string) => void;
@@ -16,6 +15,7 @@ export default function CableResistanceCalculator({ onShare }: CableResistanceCa
   const [length, setLength] = useState<string>('');
   const [material, setMaterial] = useState<'copper' | 'aluminium'>('copper');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   const calculation = useMemo(() => {
     const sizeVal = parseFloat(cableSize);
@@ -60,21 +60,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!auth.currentUser) {
-      try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error('Login failed:', error);
-        return;
-      }
-    }
-    
     if (isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        auth.currentUser!.uid,
+        auth.currentUser?.uid,
         'cable_resistance',
         `Resistance: ${cableSize}/${cpcSize}mm² ${length}m`,
         { cableSize, cpcSize, length, material },
@@ -86,6 +76,24 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    if ((parseFloat(length) || 0) <= 0) return;
+
+    const payload = {
+      type: 'cable_resistance' as const,
+      title: `Resistance: ${cableSize}/${cpcSize}mm² ${length}m`,
+      inputs: { cableSize, cpcSize, length, material },
+      results: { r1: calculation.r1, r2: calculation.r2, totalR: calculation.totalR }
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving cable resistance history:', error);
+    });
+  }, [calculation, cableSize, cpcSize, length, material]);
 
   return (
     <div className="space-y-6">
@@ -192,17 +200,8 @@ Calculated via BS7671 Field Toolkit
                 disabled={isSavingHistory}
                 className="flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500 disabled:opacity-50"
               >
-                {!auth.currentUser ? (
-                  <>
-                    <LogIn size={14} />
-                    Login to Save
-                  </>
-                ) : (
-                  <>
-                    {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
-                    {isSavingHistory ? 'Saved' : 'Save'}
-                  </>
-                )}
+                {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
+                {isSavingHistory ? 'Saved' : 'Save'}
               </button>
             </div>
           </div>

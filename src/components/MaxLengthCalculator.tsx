@@ -1,11 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Ruler, Share2, Activity, AlertTriangle, CheckCircle2, History as HistoryIcon, Check, LogIn } from 'lucide-react';
+import { Ruler, Share2, Activity, AlertTriangle, CheckCircle2, History as HistoryIcon, Check } from 'lucide-react';
 import { DeviceType, CableType } from '../types';
 import { DEVICE_LIMITS, CABLE_DATABASE, VOLTAGES } from '../constants';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 interface MaxLengthCalculatorProps {
   onShare: (text: string) => void;
@@ -21,6 +20,7 @@ export default function MaxLengthCalculator({ onShare }: MaxLengthCalculatorProp
   const [loadAmps, setLoadAmps] = useState<string>('20');
   const [enteredLength, setEnteredLength] = useState<string>('');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   const calculation = useMemo(() => {
     const zeVal = parseFloat(ze) || 0;
@@ -91,21 +91,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!auth.currentUser) {
-      try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error('Login failed:', error);
-        return;
-      }
-    }
-    
     if (isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        auth.currentUser!.uid,
+        auth.currentUser?.uid,
         'max_length',
         `Max Length: ${deviceType} ${rating}A / ${cableType} ${cableSize}mm²`,
         { deviceType, cableType, rating, cableSize, ze, allowedVD, loadAmps, enteredLength },
@@ -117,6 +107,24 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    if (!Number.isFinite(calculation.maxLen) || calculation.maxLen <= 0) return;
+
+    const payload = {
+      type: 'max_length' as const,
+      title: `Max Length: ${deviceType} ${rating}A / ${cableType} ${cableSize}mm²`,
+      inputs: { deviceType, cableType, rating, cableSize, ze, allowedVD, loadAmps, enteredLength },
+      results: { maxLen: calculation.maxLen, limitingFactor: calculation.limitingFactor, isCompliant: calculation.isCompliant }
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving max length history:', error);
+    });
+  }, [calculation, deviceType, rating, cableType, cableSize, ze, allowedVD, loadAmps, enteredLength]);
 
   return (
     <div className="space-y-6">
@@ -281,17 +289,8 @@ Calculated via BS7671 Field Toolkit
               disabled={isSavingHistory}
               className="flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500 disabled:opacity-50"
             >
-              {!auth.currentUser ? (
-                <>
-                  <LogIn size={14} />
-                  Login to Save
-                </>
-              ) : (
-                <>
-                  {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
-                  {isSavingHistory ? 'Saved' : 'Save'}
-                </>
-              )}
+              {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
+              {isSavingHistory ? 'Saved' : 'Save'}
             </button>
           </div>
         </div>

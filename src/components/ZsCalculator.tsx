@@ -13,7 +13,6 @@ import {
   Check,
   X,
   Cpu,
-  LogIn,
   History as HistoryIcon
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
@@ -23,7 +22,6 @@ import { SupplySystem, DeviceType } from '../types';
 import { CABLE_RESISTANCE, DEVICE_LIMITS } from '../constants';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 interface ZsCalculatorProps {
   onShare: (text: string) => void;
@@ -49,6 +47,7 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
   
   const shareRef = React.useRef<HTMLDivElement>(null);
   const pdfRef = React.useRef<HTMLDivElement>(null);
+  const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   // Reset protective device rating when type changes
   useEffect(() => {
@@ -164,21 +163,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!auth.currentUser) {
-      try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error('Login failed:', error);
-        return;
-      }
-    }
-    
     if (isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        auth.currentUser!.uid,
+        auth.currentUser?.uid,
         'zs',
         `Zs: ${deviceType} ${protectiveDevice}A`,
         { supplySystem, ze, cableSize: `${phaseSize}/${cpcSize}`, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice },
@@ -191,6 +180,25 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    const hasInput = useTotalResistance ? parseFloat(totalResistance) > 0 : parseFloat(cableLength) > 0;
+    if (!hasInput) return;
+
+    const payload = {
+      type: 'zs' as const,
+      title: `Zs: ${deviceType} ${protectiveDevice}A`,
+      inputs: { supplySystem, ze, cableSize: `${phaseSize}/${cpcSize}`, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice },
+      results: { zs: calculation.zs, maxZs: calculation.maxZs, isCompliant: calculation.isCompliant }
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving Zs history:', error);
+    });
+  }, [calculation, supplySystem, ze, phaseSize, cpcSize, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice]);
 
   const availableRatings = useMemo(() => {
     return Object.keys(DEVICE_LIMITS[deviceType]).map(Number).sort((a, b) => a - b);
@@ -464,17 +472,8 @@ Calculated via BS7671 Field Toolkit
                 disabled={isSavingHistory}
                 className="flex-1 flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500 disabled:opacity-50"
               >
-                {!auth.currentUser ? (
-                  <>
-                    <LogIn size={14} />
-                    Login to Save
-                  </>
-                ) : (
-                  <>
-                    {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
-                    {isSavingHistory ? 'Saved' : 'Save History'}
-                  </>
-                )}
+                {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
+                {isSavingHistory ? 'Saved' : 'Save History'}
               </button>
             </div>
           </div>

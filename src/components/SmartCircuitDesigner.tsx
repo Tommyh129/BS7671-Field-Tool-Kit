@@ -1,11 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Ruler, Settings2, CheckCircle2, AlertTriangle, Share2, History as HistoryIcon, Check, LogIn, ArrowRightLeft } from 'lucide-react';
+import { Zap, Ruler, Settings2, CheckCircle2, AlertTriangle, Share2, History as HistoryIcon, Check, ArrowRightLeft } from 'lucide-react';
 import { SupplyType, InstallationMethod, SupplySystem, DeviceType, CircuitType, CableType } from '../types';
 import { calculateCircuit } from '../utils/calculations';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 interface SmartCircuitDesignerProps {
   onShare: (text: string) => void;
@@ -23,6 +22,7 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
   const [supplySystem, setSupplySystem] = useState<SupplySystem>(SupplySystem.TN_C_S);
   const [zeValue, setZeValue] = useState<string>('0.35');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   const zeMap: Record<SupplySystem, number> = {
     [SupplySystem.TN_C_S]: 0.35,
@@ -91,21 +91,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!auth.currentUser) {
-      try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error('Login failed:', error);
-        return;
-      }
-    }
-    
     if (!result || isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        auth.currentUser!.uid,
+        auth.currentUser?.uid,
         'circuit',
         `Design: ${result.cableSize}mm² / ${result.protectiveDevice}A`,
         { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue },
@@ -117,6 +107,24 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    if (!result) return;
+
+    const payload = {
+      type: 'circuit' as const,
+      title: `Design: ${result.cableSize}mm² / ${result.protectiveDevice}A`,
+      inputs: { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue },
+      results: result
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving smart circuit history:', error);
+    });
+  }, [result, loadValue, loadUnit, length, method, cableType, supplySystem, zeValue]);
 
   return (
     <div className="space-y-6">
@@ -363,17 +371,8 @@ Calculated via BS7671 Field Toolkit
                 disabled={isSavingHistory}
                 className="flex-1 flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500 disabled:opacity-50"
               >
-                {!auth.currentUser ? (
-                  <>
-                    <LogIn size={14} />
-                    Login to Save
-                  </>
-                ) : (
-                  <>
-                    {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
-                    {isSavingHistory ? 'Saved' : 'Save History'}
-                  </>
-                )}
+                {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
+                {isSavingHistory ? 'Saved' : 'Save History'}
               </button>
             </div>
           </div>

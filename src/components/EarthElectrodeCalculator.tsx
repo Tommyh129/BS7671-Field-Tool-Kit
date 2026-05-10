@@ -1,9 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Activity, Share2, AlertTriangle, CheckCircle2, History as HistoryIcon, Check, LogIn } from 'lucide-react';
+import { Activity, Share2, AlertTriangle, CheckCircle2, History as HistoryIcon, Check } from 'lucide-react';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 interface EarthElectrodeCalculatorProps {
   onShare: (text: string) => void;
@@ -15,6 +14,7 @@ export default function EarthElectrodeCalculator({ onShare }: EarthElectrodeCalc
   const [voltage, setVoltage] = useState<string>('230');
   const [disconnectionTime, setDisconnectionTime] = useState<string>('200'); // ms for TT
   const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   const calculation = useMemo(() => {
     const measuredVal = parseFloat(measuredResistance) || 0;
@@ -55,21 +55,11 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!auth.currentUser) {
-      try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error('Login failed:', error);
-        return;
-      }
-    }
-    
     if (!calculation || isSavingHistory) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
-        auth.currentUser!.uid,
+        auth.currentUser?.uid,
         'electrode',
         `Electrode: ${measuredResistance}Ω`,
         { measuredResistance, rcdRating, voltage, disconnectionTime },
@@ -81,6 +71,24 @@ Calculated via BS7671 Field Toolkit
       setIsSavingHistory(false);
     }
   };
+
+  useEffect(() => {
+    if ((parseFloat(measuredResistance) || 0) <= 0) return;
+
+    const payload = {
+      type: 'electrode' as const,
+      title: `Electrode: ${measuredResistance}Ω`,
+      inputs: { measuredResistance, rcdRating, voltage, disconnectionTime },
+      results: { maxRa: calculation.maxRa, isCompliant: calculation.isCompliant, isStable: calculation.isStable }
+    };
+    const signature = JSON.stringify(payload);
+    if (lastSavedHistoryRef.current === signature) return;
+    lastSavedHistoryRef.current = signature;
+
+    saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
+      console.error('Error auto-saving earth electrode history:', error);
+    });
+  }, [calculation, measuredResistance, rcdRating, voltage, disconnectionTime]);
 
   return (
     <div className="space-y-6">
@@ -189,17 +197,8 @@ Calculated via BS7671 Field Toolkit
                 disabled={isSavingHistory}
                 className="flex-1 flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500 disabled:opacity-50"
               >
-                {!auth.currentUser ? (
-                  <>
-                    <LogIn size={14} />
-                    Login to Save
-                  </>
-                ) : (
-                  <>
-                    {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
-                    {isSavingHistory ? 'Saved' : 'Save History'}
-                  </>
-                )}
+                {isSavingHistory ? <Check size={14} /> : <HistoryIcon size={14} />}
+                {isSavingHistory ? 'Saved' : 'Save History'}
               </button>
             </div>
           </div>
