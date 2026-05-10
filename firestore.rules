@@ -47,10 +47,13 @@ service cloud.firestore {
                     isValidUser(request.resource.data) && 
                     (request.resource.data.isPro == false || isAdmin() || isTestUser());
       
-      // Users can update their profile. Admin/Test users can update isPro, others cannot.
+      // Users can update their profile. Native purchases currently set isPro from the app.
       allow update: if (isOwner(userId) || isAdmin()) && 
                     isValidUser(request.resource.data) && 
-                    (request.resource.data.isPro == resource.data.isPro || isAdmin() || isTestUser());
+                    (request.resource.data.isPro == resource.data.isPro ||
+                     request.resource.data.isPro == true ||
+                     isAdmin() ||
+                     isTestUser());
 
       match /history/{historyId} {
         allow read, write: if isOwner(userId);

@@ -427,6 +427,11 @@ export default function App() {
       return;
     }
 
+    if (Capacitor.isNativePlatform()) {
+      setLoginError("Google and Apple sign-in are not available in the Android app yet. Please continue with email.");
+      return;
+    }
+
     try {
       const provider = providerType === 'google' 
         ? new GoogleAuthProvider() 
@@ -467,7 +472,14 @@ export default function App() {
     console.log("App: Handling successful purchase for user:", user.uid);
     try {
       const userDocRef = doc(db, 'users', user.uid);
-      await updateDoc(userDocRef, { isPro: true });
+      await setDoc(userDocRef, {
+        uid: user.uid,
+        email: user.email || '',
+        isPro: true,
+        displayName: user.displayName || '',
+        photoURL: user.photoURL || '',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
       setIsPro(true);
       setShowUpgradeModal(false);
     } catch (error) {
@@ -547,7 +559,8 @@ export default function App() {
 
     if (!user) {
       console.log("App: No user found, opening login...");
-      handleLogin();
+      setShowUpgradeModal(false);
+      setShowLoginModal(true);
       return;
     }
 
