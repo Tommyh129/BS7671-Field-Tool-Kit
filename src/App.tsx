@@ -57,6 +57,8 @@ import { Capacitor } from '@capacitor/core';
 import { InAppPurchase } from 'capacitor-plugin-purchase';
 import { 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   OAuthProvider,
   onAuthStateChanged, 
@@ -203,6 +205,13 @@ export default function App() {
       }
     };
     checkKey();
+  }, []);
+
+  useEffect(() => {
+    getRedirectResult(auth).catch((error) => {
+      console.error("Redirect login failed", error);
+      setLoginError(error.message || "Social sign-in failed.");
+    });
   }, []);
 
   const handleSelectKey = async () => {
@@ -428,19 +437,28 @@ export default function App() {
       return;
     }
 
-    if (Capacitor.isNativePlatform()) {
-      setLoginError("Google and Apple sign-in are not available in the Android app yet. Please continue with email.");
-      return;
-    }
-
+    setIsLoggingIn(true);
     try {
       const provider = providerType === 'google' 
         ? new GoogleAuthProvider() 
         : new OAuthProvider('apple.com');
-      await signInWithPopup(auth, provider);
-      setShowLoginModal(false);
-    } catch (error) {
+
+      if (providerType === 'apple') {
+        provider.addScope('email');
+        provider.addScope('name');
+      }
+
+      if (Capacitor.isNativePlatform()) {
+        await signInWithRedirect(auth, provider);
+      } else {
+        await signInWithPopup(auth, provider);
+        setShowLoginModal(false);
+      }
+    } catch (error: any) {
       console.error(`${providerType} login failed`, error);
+      setLoginError(error.message || `${providerType} sign-in failed.`);
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
