@@ -8,7 +8,7 @@ workflows:
       groups:
         - app_store_credentials # Configure these in Codemagic UI: issuer_id, key_id, private_key
       vars:
-        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
         APP_ID: "com.bs7671.fieldtoolkit"
         BETA_FEEDBACK_EMAIL: "tommyholm97@gmail.com"
@@ -32,13 +32,19 @@ workflows:
             echo "ERROR: 'dist' directory not found."
             exit 1
           fi
-          rm -rf ios
-          echo "{\"appId\": \"$APP_ID\", \"appName\": \"BS7671 Field Toolkit\", \"webDir\": \"dist\"}" > capacitor.config.json
-          npx cap add ios || true
+          if [ ! -d "ios/App/App.xcodeproj" ]; then
+            npx cap add ios
+          fi
+          node scripts/patch-capawesome-google-spm.mjs
           npm run assets:generate
           test -f ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
+          test -f ios/App/App/GoogleService-Info.plist
+          npx cap sync ios
+          node scripts/prepare-ios-firebase-auth.mjs
           # Force deployment target to 15.0 for compatibility
-          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
+          if [ -f "ios/App/Podfile" ]; then
+            sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/g" ios/App/Podfile
+          fi
           find ios/App/App.xcodeproj -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' {} +
           
           # Fix Export Compliance (skip manual encryption question)
@@ -47,8 +53,10 @@ workflows:
             /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
           fi
           
-          cd ios/App && pod repo update && cd ../..
-          npx cap sync ios
+          if [ -f "ios/App/Podfile" ]; then
+            cd ios/App && pod repo update && cd ../..
+          fi
+          xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME"
       - name: Set up Signing
         script: |
           set -e
@@ -284,7 +292,7 @@ workflows:
           </plist>
           EOF
           xcode-project build-ipa \
-            --workspace "$XCODE_WORKSPACE" \
+            --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
             --export-options-plist ExportOptions.plist \
             --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "419639017146",
+    "project_id": "bs7671fieldtoolkit",
+    "storage_bucket": "bs7671fieldtoolkit.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:419639017146:android:6c49965eec05fe9d224c83",
+        "android_client_info": {
+          "package_name": "com.bs7671.fieldtoolkit"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBwqEk8ipRDHu8bsHL0KeB4u4G19IU2yOs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

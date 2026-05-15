@@ -54,11 +54,10 @@ import { checkRegulatoryUpdates, RegulatoryUpdate } from './services/geminiServi
 import { saveCalculation } from './services/historyService';
 import { auth, db } from './firebase';
 import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { InAppPurchase } from 'capacitor-plugin-purchase';
 import { 
   signInWithPopup, 
-  signInWithRedirect,
-  getRedirectResult,
   GoogleAuthProvider, 
   OAuthProvider,
   onAuthStateChanged, 
@@ -66,6 +65,7 @@ import {
   User,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithCredential,
   updateProfile
 } from 'firebase/auth';
 import { 
@@ -205,13 +205,6 @@ export default function App() {
       }
     };
     checkKey();
-  }, []);
-
-  useEffect(() => {
-    getRedirectResult(auth).catch((error) => {
-      console.error("Redirect login failed", error);
-      setLoginError(error.message || "Social sign-in failed.");
-    });
   }, []);
 
   const handleSelectKey = async () => {
@@ -411,6 +404,41 @@ export default function App() {
     testConnection();
   }, []);
 
+  const handleNativeSocialLogin = async (providerType: 'google' | 'apple') => {
+    const result = providerType === 'google'
+      ? await FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true })
+      : await FirebaseAuthentication.signInWithApple({
+          skipNativeAuth: true,
+          scopes: ['email', 'name']
+        });
+
+    const nativeCredential = result.credential;
+
+    if (providerType === 'google') {
+      if (!nativeCredential?.idToken && !nativeCredential?.accessToken) {
+        throw new Error("Google sign-in did not return an auth token.");
+      }
+
+      const credential = GoogleAuthProvider.credential(
+        nativeCredential?.idToken || null,
+        nativeCredential?.accessToken || undefined
+      );
+      await signInWithCredential(auth, credential);
+      return;
+    }
+
+    if (!nativeCredential?.idToken) {
+      throw new Error("Apple sign-in did not return an ID token.");
+    }
+
+    const provider = new OAuthProvider('apple.com');
+    const credential = provider.credential({
+      idToken: nativeCredential.idToken,
+      rawNonce: nativeCredential.nonce
+    });
+    await signInWithCredential(auth, credential);
+  };
+
   const handleLogin = async (providerType: 'google' | 'apple' | 'email' = 'google') => {
     setLoginError(null);
     if (providerType === 'email') {
@@ -449,7 +477,8 @@ export default function App() {
       }
 
       if (Capacitor.isNativePlatform()) {
-        await signInWithRedirect(auth, provider);
+        await handleNativeSocialLogin(providerType);
+        setShowLoginModal(false);
       } else {
         await signInWithPopup(auth, provider);
         setShowLoginModal(false);
