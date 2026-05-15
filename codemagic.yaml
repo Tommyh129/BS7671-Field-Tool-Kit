@@ -140,6 +140,7 @@ workflows:
                           print("Sign in with Apple capability already enabled.")
                   else:
                       print(f"Capability Check Warning: {caps_resp.text}")
+                      sys.exit(1)
                   
                   pn = "FieldToolkit_Managed_Dist"
                   # Cleanup existing profile
@@ -284,6 +285,14 @@ workflows:
           echo "TEAM_ID=$TEAM_ID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
+
+          echo "--- Provisioning Profile Entitlements ---"
+          /usr/libexec/PlistBuddy -c "Print Entitlements" /tmp/profile.plist || true
+          if ! /usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.applesignin:0" /tmp/profile.plist > /dev/null 2>&1; then
+            echo "ERROR: Provisioning profile is missing the Sign in with Apple entitlement."
+            echo "Open Apple Developer > Certificates, Identifiers & Profiles > Identifiers > $APP_ID, enable Sign in with Apple, then rerun Codemagic."
+            exit 1
+          fi
           
           # Patch project
           PBXPROJ=$(find ios/App/App.xcodeproj -name "project.pbxproj")
@@ -318,10 +327,10 @@ workflows:
           </dict>
           </plist>
           EOF
-          mkdir -p build/ios/xcarchive build/ios/ipa
+          mkdir -p build/ios/xcarchive build/ios/ipa build/ios/logs
           ARCHIVE_PATH="build/ios/xcarchive/App.xcarchive"
-          ARCHIVE_LOG="/tmp/xcodebuild-archive.log"
-          EXPORT_LOG="/tmp/xcodebuild-export.log"
+          ARCHIVE_LOG="build/ios/logs/xcodebuild-archive.log"
+          EXPORT_LOG="build/ios/logs/xcodebuild-export.log"
 
           echo "--- Archiving with xcodebuild ---"
           if ! xcodebuild \
@@ -385,6 +394,7 @@ workflows:
             --expire-build-submitted-for-review
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/logs/*.log
     publishing:
       email:
         recipients:
