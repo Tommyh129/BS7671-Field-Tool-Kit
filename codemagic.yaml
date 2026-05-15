@@ -36,6 +36,7 @@ workflows:
             npx cap add ios
           fi
           node scripts/patch-capawesome-google-spm.mjs
+          node scripts/patch-purchase-spm.mjs
           npm run assets:generate
           test -f ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
           test -f ios/App/App/GoogleService-Info.plist
