@@ -115,6 +115,31 @@ workflows:
                       print(f"Error: Bundle ID {app_id} not found")
                       sys.exit(1)
                   bid = bid_resp.json()['data'][0]['id']
+
+                  # Ensure the provisioning profile contains the Apple Sign-In entitlement.
+                  # If this is missing, archive fails later with a generic Xcode status 65.
+                  caps_resp = requests.get(f"https://api.appstoreconnect.apple.com/v1/bundleIds/{bid}/bundleIdCapabilities", headers=headers)
+                  if caps_resp.status_code == 200:
+                      caps = caps_resp.json().get('data', [])
+                      has_apple_signin = any(c.get('attributes', {}).get('capabilityType') == 'APPLE_ID_AUTH' for c in caps)
+                      if not has_apple_signin:
+                          print("Enabling Sign in with Apple capability for bundle ID...")
+                          cap_res = requests.post("https://api.appstoreconnect.apple.com/v1/bundleIdCapabilities", headers=headers, json={
+                              "data": {
+                                  "type": "bundleIdCapabilities",
+                                  "attributes": {"capabilityType": "APPLE_ID_AUTH"},
+                                  "relationships": {"bundleId": {"data": {"type": "bundleIds", "id": bid}}}
+                              }
+                          })
+                          if cap_res.status_code not in (201, 409):
+                              print(f"Capability Error: {cap_res.text}")
+                              print("Enable Sign in with Apple manually for this bundle ID, then rerun the build.")
+                              sys.exit(1)
+                          time.sleep(5)
+                      else:
+                          print("Sign in with Apple capability already enabled.")
+                  else:
+                      print(f"Capability Check Warning: {caps_resp.text}")
                   
                   pn = "FieldToolkit_Managed_Dist"
                   # Cleanup existing profile
@@ -273,6 +298,7 @@ workflows:
           sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9.]*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" "$PBXPROJ"
       - name: Build iOS app
         script: |
+          set -euo pipefail
           # Use local ExportOptions.plist for precise control
           cat > ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -292,11 +318,44 @@ workflows:
           </dict>
           </plist>
           EOF
-          xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" \
-            --export-options-plist ExportOptions.plist \
-            --archive-flags "DEVELOPMENT_TEAM=$TEAM_ID PROVISIONING_PROFILE=$PROFILE_UUID PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_NAME\" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\""
+          mkdir -p build/ios/xcarchive build/ios/ipa
+          ARCHIVE_PATH="build/ios/xcarchive/App.xcarchive"
+          ARCHIVE_LOG="/tmp/xcodebuild-archive.log"
+          EXPORT_LOG="/tmp/xcodebuild-export.log"
+
+          echo "--- Archiving with xcodebuild ---"
+          if ! xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PROVISIONING_PROFILE="$PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            archive 2>&1 | tee "$ARCHIVE_LOG"; then
+            echo "--- Archive failed: likely useful lines ---"
+            grep -nEi "error:|CodeSign|Provisioning profile|requires a provisioning profile|No profiles|entitlement|SwiftCompile|CompileSwift|Ld " "$ARCHIVE_LOG" || true
+            echo "--- Archive failed: last 200 log lines ---"
+            tail -n 200 "$ARCHIVE_LOG"
+            exit 1
+          fi
+
+          echo "--- Exporting IPA ---"
+          if ! xcodebuild \
+            -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/ios/ipa 2>&1 | tee "$EXPORT_LOG"; then
+            echo "--- Export failed: likely useful lines ---"
+            grep -nEi "error:|CodeSign|Provisioning profile|No profiles|entitlement|export" "$EXPORT_LOG" || true
+            echo "--- Export failed: last 200 log lines ---"
+            tail -n 200 "$EXPORT_LOG"
+            exit 1
+          fi
       - name: Upload to TestFlight
         script: |
           echo "--- Submitting to App Store Connect ---"
