@@ -145,6 +145,7 @@ const SUPPORT_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-
 const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
 const PRO_PRODUCT_ID = 'pro_subscription'; // Match your App Store/Play Store ID
 const PRO_PRODUCT_TYPE = 'subscription';
+const nativeProStorageKey = (uid: string) => `bs7671_native_pro_${uid}`;
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.HOME);
@@ -154,6 +155,7 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isPro, setIsPro] = useState(false);
+  const [hasNativeProPurchase, setHasNativeProPurchase] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
@@ -216,11 +218,21 @@ export default function App() {
     }
   };
 
+  const setNativeProAccess = (uid: string, hasAccess: boolean) => {
+    setHasNativeProPurchase(hasAccess);
+    const storageKey = nativeProStorageKey(uid);
+    if (hasAccess) {
+      localStorage.setItem(storageKey, 'true');
+    } else {
+      localStorage.removeItem(storageKey);
+    }
+  };
+
   const effectiveIsPro = useMemo(() => {
     // Force Pro for specific testing accounts if needed
     if (user && isAutoPro(user.email || "")) return true;
-    return isPro;
-  }, [isPro, user]);
+    return isPro || hasNativeProPurchase;
+  }, [isPro, hasNativeProPurchase, user]);
   
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -504,28 +516,39 @@ export default function App() {
     if (!Capacitor.isNativePlatform()) return;
 
     console.log("App: Initializing Native IAP...");
+
+    if (!user) {
+      setHasNativeProPurchase(false);
+      return;
+    }
+
+    setHasNativeProPurchase(localStorage.getItem(nativeProStorageKey(user.uid)) === 'true');
     
     const checkActivePurchases = async () => {
       try {
-        const { purchases } = await InAppPurchase.getActivePurchases({ userId: user?.uid });
+        const { purchases } = await InAppPurchase.getActivePurchases({ userId: user.uid });
         console.log("App: Active Purchases ->", purchases.length);
         const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
+        setNativeProAccess(user.uid, hasPro);
         if (hasPro) {
-          handleSuccessfulPurchase();
+          await handleSuccessfulPurchase();
         }
       } catch (error) {
         console.error("App: Failed to check active purchases", error);
       }
     };
 
-    if (user) {
-      checkActivePurchases();
-    }
+    checkActivePurchases();
   }, [user]);
 
   const handleSuccessfulPurchase = async () => {
     if (!user) return;
     console.log("App: Handling successful purchase for user:", user.uid);
+
+    setNativeProAccess(user.uid, true);
+    setIsPro(true);
+    setShowUpgradeModal(false);
+
     try {
       const userDocRef = doc(db, 'users', user.uid);
       await setDoc(userDocRef, {
@@ -536,10 +559,8 @@ export default function App() {
         photoURL: user.photoURL || '',
         updatedAt: new Date().toISOString()
       }, { merge: true });
-      setIsPro(true);
-      setShowUpgradeModal(false);
     } catch (error) {
-      console.error("App: Failed to update Pro status in Firestore", error);
+      console.error("App: Failed to sync Pro status to Firestore; keeping local store entitlement active.", error);
     }
   };
 
@@ -553,8 +574,11 @@ export default function App() {
         console.log("App: Restoring Native Purchases...");
         const { purchases } = await InAppPurchase.restorePurchases({ userId: user.uid });
         const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
+        setNativeProAccess(user.uid, hasPro);
         if (hasPro) {
-          handleSuccessfulPurchase();
+          await handleSuccessfulPurchase();
+        } else {
+          alert('No active Pro subscription was found for this store account.');
         }
       } catch (error) {
         console.error("App: Restore failed", error);
@@ -653,7 +677,7 @@ export default function App() {
         
         if (transaction?.transactionId || transaction?.status === 'purchased') {
           console.log("App: Native Purchase success ->", transaction.transactionId);
-          handleSuccessfulPurchase();
+          await handleSuccessfulPurchase();
         } else if (transaction?.status === 'pending') {
           alert('Your purchase is pending approval in the store. Pro will unlock once the purchase completes.');
         } else {
