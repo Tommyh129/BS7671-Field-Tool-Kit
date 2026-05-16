@@ -406,7 +406,10 @@ export default function App() {
 
   const handleNativeSocialLogin = async (providerType: 'google' | 'apple') => {
     const result = providerType === 'google'
-      ? await FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true })
+      ? await FirebaseAuthentication.signInWithGoogle({
+          skipNativeAuth: true,
+          useCredentialManager: false
+        })
       : await FirebaseAuthentication.signInWithApple({
           skipNativeAuth: true,
           scopes: ['email', 'name']
