@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "419639017146",
+    "firebase_url": "https://bs7671fieldtoolkit-default-rtdb.europe-west1.firebasedatabase.app",
     "project_id": "bs7671fieldtoolkit",
     "storage_bucket": "bs7671fieldtoolkit.firebasestorage.app"
   },
@@ -12,7 +13,20 @@
           "package_name": "com.bs7671.fieldtoolkit"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "419639017146-hs3qaisin2bn7usf14l8urud4vqugfer.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.bs7671.fieldtoolkit",
+            "certificate_hash": "ab1a66afa2a3e5ec852614202a9f2e6cf8811427"
+          }
+        },
+        {
+          "client_id": "419639017146-8uev8i45to4uaemebs60a0aadeoib77v.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBwqEk8ipRDHu8bsHL0KeB4u4G19IU2yOs"
@@ -20,7 +34,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "419639017146-8uev8i45to4uaemebs60a0aadeoib77v.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "419639017146-f3i6v8rumi6kiobljsjds6emuvilovhl.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.bs7671.fieldtoolkit"
+              }
+            }
+          ]
         }
       }
     }
