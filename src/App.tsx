@@ -56,6 +56,7 @@ import { auth, db } from './firebase';
 import { Capacitor } from '@capacitor/core';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { InAppPurchase } from 'capacitor-plugin-purchase';
+import { Share as NativeShare } from '@capacitor/share';
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
@@ -143,6 +144,7 @@ const TERMS_OF_SERVICE_URL = 'https://app.termly.io/policy-viewer/policy.html?po
 const SUPPORT_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app?page=support';
 const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
 const PRO_PRODUCT_ID = 'pro_subscription'; // Match your App Store/Play Store ID
+const PRO_PRODUCT_TYPE = 'subscription';
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.HOME);
@@ -242,9 +244,12 @@ export default function App() {
   const [targetCurrent, setTargetCurrent] = useState<string>('');
   const [showMethodInfo, setShowMethodInfo] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
+  const [showTextShareMenu, setShowTextShareMenu] = useState(false);
+  const [sharedText, setSharedText] = useState('');
   const [isCopying, setIsCopying] = useState(false);
   const [isSavingImage, setIsSavingImage] = useState(false);
   const [isSavingPDF, setIsSavingPDF] = useState(false);
+  const [isSavingTextPDF, setIsSavingTextPDF] = useState(false);
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const shareRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
@@ -626,17 +631,33 @@ export default function App() {
     if (Capacitor.isNativePlatform()) {
       try {
         console.log("App: Starting Native Purchase flow for:", PRO_PRODUCT_ID);
+        const { allowed } = await InAppPurchase.canMakePurchases();
+        if (!allowed) {
+          throw new Error('Purchases are not available on this device or account.');
+        }
+
+        const { products } = await InAppPurchase.getProducts({
+          productIds: [PRO_PRODUCT_ID],
+          productType: PRO_PRODUCT_TYPE as any
+        });
+
+        if (!products.some(product => product.productId === PRO_PRODUCT_ID)) {
+          throw new Error(`Product ${PRO_PRODUCT_ID} was not returned by the store. Check the product ID, package name, signing key, and closed testing availability.`);
+        }
+
         const transaction = await InAppPurchase.purchaseProduct({ 
           productId: PRO_PRODUCT_ID,
-          productType: 'non-consumable',
+          productType: PRO_PRODUCT_TYPE as any,
           userId: user.uid
-        });
+        }) as any;
         
-        if (transaction) {
+        if (transaction?.transactionId || transaction?.status === 'purchased') {
           console.log("App: Native Purchase success ->", transaction.transactionId);
           handleSuccessfulPurchase();
+        } else if (transaction?.status === 'pending') {
+          alert('Your purchase is pending approval in the store. Pro will unlock once the purchase completes.');
         } else {
-          console.warn("App: Native Purchase returned no transaction");
+          throw new Error(transaction?.errorMessage || transaction?.errorCode || 'The store did not complete the purchase.');
         }
       } catch (error: any) {
         console.error("App: Native Purchase failed", error);
@@ -727,28 +748,93 @@ export default function App() {
   };
 
   const handleShareResult = async (text: string) => {
-    const copyToClipboard = async () => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setIsCopying(true);
-        setTimeout(() => setIsCopying(false), 2000);
-      } catch (err) {
-        console.error('Clipboard error:', err);
-      }
-    };
+    setSharedText(text);
+    setShowTextShareMenu(true);
+  };
 
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: 'BS7671 Field Toolkit Calculation', text });
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') {
-          return; // User cancelled
-        }
-        console.error('Share error, falling back to clipboard:', err);
-        await copyToClipboard();
+  const handleCopySharedText = async () => {
+    if (!sharedText) return;
+    try {
+      await navigator.clipboard.writeText(sharedText);
+      setIsCopying(true);
+      setTimeout(() => setIsCopying(false), 2000);
+    } catch (err) {
+      console.error('Clipboard error:', err);
+    }
+  };
+
+  const handleNativeShareText = async () => {
+    if (!sharedText) return;
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await NativeShare.share({
+          title: 'BS7671 Field Toolkit Calculation',
+          text: sharedText
+        });
+        return;
       }
-    } else {
-      await copyToClipboard();
+
+      if (navigator.share) {
+        await navigator.share({ title: 'BS7671 Field Toolkit Calculation', text: sharedText });
+        return;
+      }
+
+      await handleCopySharedText();
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        return;
+      }
+      console.error('Share error, falling back to clipboard:', err);
+      await handleCopySharedText();
+    }
+  };
+
+  const handleDownloadSharedTextPDF = async () => {
+    if (!sharedText || isSavingTextPDF) return;
+    setIsSavingTextPDF(true);
+    try {
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'pt',
+        format: 'a4'
+      });
+      const margin = 40;
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const lineHeight = 14;
+      let y = 52;
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(16);
+      pdf.text('BS7671 Field Toolkit Calculation', margin, y);
+      y += 22;
+
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(10);
+      pdf.setTextColor(90);
+      pdf.text(new Date().toLocaleDateString(), margin, y);
+      y += 28;
+
+      pdf.setTextColor(20);
+      pdf.setFont('courier', 'normal');
+      pdf.setFontSize(10);
+
+      const lines = pdf.splitTextToSize(sharedText, pageWidth - margin * 2);
+      lines.forEach((line: string) => {
+        if (y > pageHeight - margin) {
+          pdf.addPage();
+          y = margin;
+        }
+        pdf.text(line, margin, y);
+        y += lineHeight;
+      });
+
+      const pdfDataUrl = pdf.output('datauristring');
+      await downloadFile(pdfDataUrl, `bs7671-calculation-${Date.now()}.pdf`, 'application/pdf');
+      setTimeout(() => setIsSavingTextPDF(false), 2000);
+    } catch (err) {
+      console.error('Error generating text PDF:', err);
+      setIsSavingTextPDF(false);
     }
   };
 
@@ -2086,6 +2172,75 @@ Calculated via BS7671 Field Toolkit
       )}
 
       <AnimatePresence>
+        {showTextShareMenu && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowTextShareMenu(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[40px] sm:rounded-[40px] p-8"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-xl font-bold">Export Calculation</h3>
+                <button onClick={() => setShowTextShareMenu(false)} className="p-2 bg-white/5 rounded-full">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <button 
+                  onClick={handleNativeShareText}
+                  className="flex flex-col items-center gap-3 p-4 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group"
+                >
+                  <div className="w-11 h-11 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
+                    <Share2 size={22} />
+                  </div>
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Share</span>
+                </button>
+
+                <button 
+                  onClick={handleCopySharedText}
+                  className="flex flex-col items-center gap-3 p-4 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group"
+                >
+                  <div className="w-11 h-11 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+                    {isCopying ? <Check size={22} /> : <Copy size={22} />}
+                  </div>
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400">
+                    {isCopying ? 'Copied' : 'Copy'}
+                  </span>
+                </button>
+
+                <button 
+                  onClick={handleDownloadSharedTextPDF}
+                  disabled={isSavingTextPDF}
+                  className="flex flex-col items-center gap-3 p-4 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
+                >
+                  <div className="w-11 h-11 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
+                    {isSavingTextPDF ? <Check size={22} /> : <FileText size={22} />}
+                  </div>
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400">
+                    {isSavingTextPDF ? 'Saved' : 'PDF'}
+                  </span>
+                </button>
+              </div>
+
+              <div className="mt-8 pt-8 border-t border-white/5">
+                <p className="text-[10px] text-gray-500 text-center uppercase font-bold tracking-widest mb-4">Preview</p>
+                <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-2xl bg-black/30 border border-white/5 p-4 text-[10px] leading-relaxed text-gray-300 font-mono">
+                  {sharedText}
+                </pre>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {showShareMenu && (
           <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
             <motion.div 

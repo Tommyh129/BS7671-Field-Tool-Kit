@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "assets:generate": "capacitor-assets generate",
+    "postinstall": "node scripts/patch-purchase-android-subscriptions.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
