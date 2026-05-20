@@ -1390,7 +1390,7 @@ Calculated via BS7671 Field Toolkit
             <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest animate-pulse mb-2">
               {isSyncing ? "Syncing Subscription..." : "Initializing Suite..."}
             </p>
-            <p className="text-gray-700 text-[8px] uppercase tracking-widest">BS7671 Field Toolkit v1.0.2</p>
+            <p className="text-gray-700 text-[8px] uppercase tracking-widest">BS7671 Field Toolkit v1.0.8</p>
           </div>
         </div>
       </div>
