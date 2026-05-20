@@ -1404,8 +1404,11 @@ Calculated via BS7671 Field Toolkit
         <header id="main-header" className="bg-[#0a0a0a]/80 backdrop-blur-md border-b border-white/5 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 sticky top-0 z-20">
           <div className="max-w-md mx-auto flex items-center justify-between">
             <div id="header-logo" className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
-              <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                <img src="/icon.svg" alt="App Icon" className="w-full h-full object-cover" />
+              <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-emerald-500 shadow-lg shadow-emerald-500/20 shrink-0">
+                <svg viewBox="0 0 1024 1024" className="w-full h-full" aria-hidden="true">
+                  <rect width="1024" height="1024" fill="#10B981" />
+                  <path d="M592.5 80L250 540H480L431.5 944L774 484H544L592.5 80Z" fill="white" />
+                </svg>
               </div>
               <h1 className="font-bold text-lg tracking-tight">BS7671 Field Toolkit</h1>
             </div>
