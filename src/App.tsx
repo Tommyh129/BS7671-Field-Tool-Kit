@@ -50,7 +50,7 @@ import EarthElectrodeCalculator from './components/EarthElectrodeCalculator';
 import ThreePhaseCalculator from './components/ThreePhaseCalculator';
 import SmartCircuitDesigner from './components/SmartCircuitDesigner';
 import History from './components/History';
-import { checkRegulatoryUpdates, RegulatoryUpdate } from './services/geminiService';
+import { checkRegulatoryUpdates, DEFAULT_REGULATORY_UPDATE, REGULATORY_CACHE_VERSION, RegulatoryUpdate } from './services/geminiService';
 import { saveCalculation } from './services/historyService';
 import { auth, db } from './firebase';
 import { Capacitor } from '@capacitor/core';
@@ -185,13 +185,7 @@ export default function App() {
   };
 
   const [isSyncing, setIsSyncing] = useState(false);
-  const [regulatoryInfo, setRegulatoryInfo] = useState<RegulatoryUpdate>({
-    version: "18th Edition",
-    amendment: "Amendment 3:2024",
-    date: "July 2024",
-    summary: "Latest requirements for electrical installations in the UK, including updates on AFDDs and bidirectional power flow.",
-    changes: []
-  });
+  const [regulatoryInfo, setRegulatoryInfo] = useState<RegulatoryUpdate>(DEFAULT_REGULATORY_UPDATE);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [recentTools, setRecentTools] = useState<AppMode[]>([]);
   const [hasApiKey, setHasApiKey] = useState(true);
@@ -280,26 +274,36 @@ export default function App() {
   const pdfRef = useRef<HTMLDivElement>(null);
   const lastSavedHistoryRef = useRef<string | null>(null);
 
+  const applyRegulatoryUpdates = (updates: RegulatoryUpdate) => {
+    setRegulatoryInfo(updates);
+    localStorage.setItem('bs7671_regulatory_info', JSON.stringify(updates));
+    localStorage.setItem('bs7671_cache_time', Date.now().toString());
+    localStorage.setItem('bs7671_cache_version', REGULATORY_CACHE_VERSION);
+  };
+
   // --- Regulatory Logic ---
   useEffect(() => {
     const fetchUpdates = async () => {
       // Check cache first
       const cached = localStorage.getItem('bs7671_regulatory_info');
       const cacheTime = localStorage.getItem('bs7671_cache_time');
+      const cacheVersion = localStorage.getItem('bs7671_cache_version');
       const now = Date.now();
       const ONE_DAY = 24 * 60 * 60 * 1000;
 
-      if (cached && cacheTime && (now - parseInt(cacheTime)) < ONE_DAY) {
-        setRegulatoryInfo(JSON.parse(cached));
-        return;
+      if (cached && cacheTime && cacheVersion === REGULATORY_CACHE_VERSION && (now - parseInt(cacheTime)) < ONE_DAY) {
+        try {
+          setRegulatoryInfo(JSON.parse(cached));
+          return;
+        } catch (error) {
+          console.warn("Cached regulatory update was invalid, refreshing.", error);
+        }
       }
 
       setIsCheckingUpdates(true);
       try {
         const updates = await checkRegulatoryUpdates();
-        setRegulatoryInfo(updates);
-        localStorage.setItem('bs7671_regulatory_info', JSON.stringify(updates));
-        localStorage.setItem('bs7671_cache_time', now.toString());
+        applyRegulatoryUpdates(updates);
       } catch (error) {
         console.error("Failed to fetch regulatory updates:", error);
       } finally {
@@ -1091,7 +1095,7 @@ Calculated via BS7671 Field Toolkit
               setIsCheckingUpdates(true);
               try {
                 const updates = await checkRegulatoryUpdates();
-                setRegulatoryInfo(updates);
+                applyRegulatoryUpdates(updates);
               } catch (error: any) {
                 if (error?.message?.includes("Requested entity was not found")) {
                   setHasApiKey(false);

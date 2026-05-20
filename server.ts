@@ -6,6 +6,7 @@ import Stripe from "stripe";
 import path from "path";
 import { fileURLToPath } from "url";
 import admin from "firebase-admin";
+import { GoogleGenAI } from "@google/genai";
 import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
 
 dotenv.config();
@@ -22,6 +23,64 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY;
+const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+interface RegulatoryUpdate {
+  version: string;
+  amendment: string;
+  date: string;
+  summary: string;
+  changes: string[];
+}
+
+const DEFAULT_REGULATORY_UPDATE: RegulatoryUpdate = {
+  version: "BS 7671:2018+A4:2026",
+  amendment: "Amendment 4:2026",
+  date: "15 April 2026",
+  summary:
+    "IET and BSI have published Amendment 4:2026 to BS 7671:2018. The update introduces new requirements for stationary secondary batteries, Power over Ethernet, and further harmonised standards changes. BS 7671:2018+A2:2022+A3:2024 is due to be withdrawn after the transition period.",
+  changes: [
+    "New chapter for stationary secondary batteries and energy storage systems.",
+    "New Section 716 for Power over Ethernet installations.",
+    "Further harmonised document and IEC standard updates across BS 7671.",
+    "Previous BS 7671:2018+A2:2022+A3:2024 edition enters a six-month transition period."
+  ]
+};
+
+let regulatoryCache: { value: RegulatoryUpdate; expiresAt: number } | null = null;
+
+function normalizeRegulatoryUpdate(data: Partial<RegulatoryUpdate>): RegulatoryUpdate {
+  return {
+    version: data.version || DEFAULT_REGULATORY_UPDATE.version,
+    amendment: data.amendment || DEFAULT_REGULATORY_UPDATE.amendment,
+    date: data.date || DEFAULT_REGULATORY_UPDATE.date,
+    summary: data.summary || DEFAULT_REGULATORY_UPDATE.summary,
+    changes: Array.isArray(data.changes) && data.changes.length > 0
+      ? data.changes
+      : DEFAULT_REGULATORY_UPDATE.changes
+  };
+}
+
+async function fetchRegulatoryUpdate(): Promise<RegulatoryUpdate> {
+  if (!geminiApiKey) {
+    return DEFAULT_REGULATORY_UPDATE;
+  }
+
+  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+  const response = await ai.models.generateContent({
+    model: geminiModel,
+    contents:
+      "Find the current/latest official BS 7671 Requirements for Electrical Installations edition and amendment from authoritative UK sources such as IET or BSI. Return only JSON with keys: version, amendment, date, summary, changes. Keep summary under 60 words and changes as an array of up to 5 concise strings.",
+    config: {
+      tools: [{ googleSearch: {} }],
+      responseMimeType: "application/json",
+    },
+  });
+
+  const text = response.text || "{}";
+  return normalizeRegulatoryUpdate(JSON.parse(text));
+}
 
 async function startServer() {
   const app = express();
@@ -95,6 +154,25 @@ async function startServer() {
   // API Routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.get("/api/regulatory-updates", async (req, res) => {
+    const now = Date.now();
+    if (regulatoryCache && regulatoryCache.expiresAt > now) {
+      return res.json(regulatoryCache.value);
+    }
+
+    try {
+      const value = await fetchRegulatoryUpdate();
+      regulatoryCache = {
+        value,
+        expiresAt: now + 24 * 60 * 60 * 1000,
+      };
+      res.json(value);
+    } catch (error: any) {
+      console.error("Regulatory update lookup failed:", error);
+      res.json(DEFAULT_REGULATORY_UPDATE);
+    }
   });
 
   app.post("/api/create-checkout-session", async (req, res) => {
