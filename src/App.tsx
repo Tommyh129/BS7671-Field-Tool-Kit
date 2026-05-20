@@ -146,6 +146,19 @@ const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
 const PRO_PRODUCT_ID = 'pro_subscription'; // Match your App Store/Play Store ID
 const PRO_PRODUCT_TYPE = 'subscription';
 const nativeProStorageKey = (uid: string) => `bs7671_native_pro_${uid}`;
+const nativePurchaseUserOptions = (uid: string) => {
+  // StoreKit appAccountToken must be a UUID. Firebase UIDs are not UUIDs, so
+  // filtering iOS restores by Firebase UID can hide valid Apple subscriptions.
+  return Capacitor.getPlatform() === 'ios' ? {} : { userId: uid };
+};
+
+const productUnavailableMessage = (productId: string) => {
+  if (Capacitor.getPlatform() === 'ios') {
+    return `Apple did not return the subscription product "${productId}". Check App Store Connect: the subscription Product ID must match exactly, be attached to bundle ID com.bs7671.fieldtoolkit, have price/localisation/review details completed, be available for sale/testing, and Paid Apps agreements must be active. If you already subscribed, use Restore Purchases.`;
+  }
+
+  return `Product ${productId} was not returned by the store. Check the product ID, package name, signing key, and closed testing availability.`;
+};
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.HOME);
@@ -526,7 +539,7 @@ export default function App() {
     
     const checkActivePurchases = async () => {
       try {
-        const { purchases } = await InAppPurchase.getActivePurchases({ userId: user.uid });
+        const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
         console.log("App: Active Purchases ->", purchases.length);
         const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
         setNativeProAccess(user.uid, hasPro);
@@ -572,7 +585,7 @@ export default function App() {
     if (Capacitor.isNativePlatform()) {
       try {
         console.log("App: Restoring Native Purchases...");
-        const { purchases } = await InAppPurchase.restorePurchases({ userId: user.uid });
+        const { purchases } = await InAppPurchase.restorePurchases(nativePurchaseUserOptions(user.uid));
         const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
         setNativeProAccess(user.uid, hasPro);
         if (hasPro) {
@@ -664,15 +677,16 @@ export default function App() {
           productIds: [PRO_PRODUCT_ID],
           productType: PRO_PRODUCT_TYPE as any
         });
+        console.log("App: Store products returned ->", products);
 
         if (!products.some(product => product.productId === PRO_PRODUCT_ID)) {
-          throw new Error(`Product ${PRO_PRODUCT_ID} was not returned by the store. Check the product ID, package name, signing key, and closed testing availability.`);
+          throw new Error(productUnavailableMessage(PRO_PRODUCT_ID));
         }
 
         const transaction = await InAppPurchase.purchaseProduct({ 
           productId: PRO_PRODUCT_ID,
           productType: PRO_PRODUCT_TYPE as any,
-          userId: user.uid
+          ...nativePurchaseUserOptions(user.uid)
         }) as any;
         
         if (transaction?.transactionId || transaction?.status === 'purchased') {
