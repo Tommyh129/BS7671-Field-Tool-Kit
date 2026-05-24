@@ -11,7 +11,7 @@ interface EarthElectrodeCalculatorProps {
 export default function EarthElectrodeCalculator({ onShare }: EarthElectrodeCalculatorProps) {
   const [measuredResistance, setMeasuredResistance] = useState<string>('');
   const [rcdRating, setRcdRating] = useState<string>('30'); // mA
-  const [voltage, setVoltage] = useState<string>('230');
+  const [touchVoltageLimit, setTouchVoltageLimit] = useState<string>('50');
   const [disconnectionTime, setDisconnectionTime] = useState<string>('200'); // ms for TT
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const lastSavedHistoryRef = React.useRef<string | null>(null);
@@ -19,9 +19,10 @@ export default function EarthElectrodeCalculator({ onShare }: EarthElectrodeCalc
   const calculation = useMemo(() => {
     const measuredVal = parseFloat(measuredResistance) || 0;
     const rcdVal = parseFloat(rcdRating) || 30;
+    const touchVoltageVal = parseFloat(touchVoltageLimit) || 50;
     
-    // Max Ra = 50V / I_delta_n
-    const maxRa = 50 / (rcdVal / 1000);
+    // Max Ra = touch voltage limit / I_delta_n
+    const maxRa = touchVoltageVal / (rcdVal / 1000);
     
     // BS 7671 Note: Ra should be as low as possible, values above 200 ohms may be unstable.
     const isCompliant = measuredVal > 0 && measuredVal <= maxRa;
@@ -32,7 +33,7 @@ export default function EarthElectrodeCalculator({ onShare }: EarthElectrodeCalc
       isCompliant,
       isStable
     };
-  }, [measuredResistance, rcdRating]);
+  }, [measuredResistance, rcdRating, touchVoltageLimit]);
 
   const handleShare = () => {
     const text = `
@@ -40,7 +41,7 @@ export default function EarthElectrodeCalculator({ onShare }: EarthElectrodeCalc
 -------------------------
 Measured Resistance: ${measuredResistance} Ω
 RCD Rating: ${rcdRating} mA
-Supply Voltage: ${voltage} V
+Touch Voltage Limit: ${touchVoltageLimit} V
 Required Disconnection Time: ${disconnectionTime} ms
 
 Max Permitted Ra = ${calculation.maxRa.toFixed(0)} Ω
@@ -62,7 +63,7 @@ Calculated via BS7671 Field Toolkit
         auth.currentUser?.uid,
         'electrode',
         `Electrode: ${measuredResistance}Ω`,
-        { measuredResistance, rcdRating, voltage, disconnectionTime },
+        { measuredResistance, rcdRating, touchVoltageLimit, disconnectionTime },
         { maxRa: calculation.maxRa, isCompliant: calculation.isCompliant, isStable: calculation.isStable }
       );
       setTimeout(() => setIsSavingHistory(false), 2000);
@@ -78,7 +79,7 @@ Calculated via BS7671 Field Toolkit
     const payload = {
       type: 'electrode' as const,
       title: `Electrode: ${measuredResistance}Ω`,
-      inputs: { measuredResistance, rcdRating, voltage, disconnectionTime },
+      inputs: { measuredResistance, rcdRating, touchVoltageLimit, disconnectionTime },
       results: { maxRa: calculation.maxRa, isCompliant: calculation.isCompliant, isStable: calculation.isStable }
     };
     const signature = JSON.stringify(payload);
@@ -88,7 +89,7 @@ Calculated via BS7671 Field Toolkit
     saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
       console.error('Error auto-saving earth electrode history:', error);
     });
-  }, [calculation, measuredResistance, rcdRating, voltage, disconnectionTime]);
+  }, [calculation, measuredResistance, rcdRating, touchVoltageLimit, disconnectionTime]);
 
   return (
     <div className="space-y-6">
@@ -121,11 +122,11 @@ Calculated via BS7671 Field Toolkit
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Voltage (V)</label>
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Touch Limit (V)</label>
               <input 
                 type="number"
-                value={voltage}
-                onChange={(e) => setVoltage(e.target.value)}
+                value={touchVoltageLimit}
+                onChange={(e) => setTouchVoltageLimit(e.target.value)}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none"
               />
             </div>
