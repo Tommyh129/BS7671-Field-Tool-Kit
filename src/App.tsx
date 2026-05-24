@@ -218,6 +218,18 @@ const productUnavailableMessage = (productIds: string[]) => {
   return `Google Play did not return any configured subscription product (${productIdLabel(productIds)}). Check the product ID, package name, signing key, active base plan, and closed testing availability. If you already subscribed, use Restore Purchases.`;
 };
 
+const HeaderLogoMark = () => (
+  <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-emerald-500 shadow-lg shadow-emerald-500/20 shrink-0 relative" aria-hidden="true">
+    <span className="absolute inset-0 flex items-center justify-center text-black/25 text-[9px] font-black tracking-tighter">
+      BS
+    </span>
+    <svg viewBox="0 0 1024 1024" className="relative z-10 w-full h-full" focusable="false">
+      <rect width="1024" height="1024" fill="#10B981" />
+      <path d="M592.5 80L250 540H480L431.5 944L774 484H544L592.5 80Z" fill="white" />
+    </svg>
+  </div>
+);
+
 export default function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.HOME);
   
@@ -1541,12 +1553,7 @@ Calculated via BS7671 Field Toolkit
         <header id="main-header" className="bg-[#0a0a0a]/80 backdrop-blur-md border-b border-white/5 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 sticky top-0 z-20">
           <div className="max-w-md mx-auto flex items-center justify-between">
             <div id="header-logo" className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
-              <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-emerald-500 shadow-lg shadow-emerald-500/20 shrink-0">
-                <svg viewBox="0 0 1024 1024" className="w-full h-full" aria-hidden="true">
-                  <rect width="1024" height="1024" fill="#10B981" />
-                  <path d="M592.5 80L250 540H480L431.5 944L774 484H544L592.5 80Z" fill="white" />
-                </svg>
-              </div>
+              <HeaderLogoMark />
               <h1 className="font-bold text-lg tracking-tight">BS7671 Field Toolkit</h1>
             </div>
             <div className="flex items-center gap-3">
