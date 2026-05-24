@@ -1,5 +1,6 @@
 import { SupplyType, InstallationMethod, CalculationResult, CircuitType, CableType, DeviceType } from '../types';
-import { CABLE_DATABASE, PROTECTIVE_DEVICES, VOLTAGES, AMBIENT_TEMP_FACTORS, GROUPING_FACTORS, CABLE_RESISTANCE, DEVICE_LIMITS } from '../constants';
+import { CABLE_DATABASE, VOLTAGES, AMBIENT_TEMP_FACTORS, GROUPING_FACTORS, DEVICE_LIMITS } from '../constants';
+import { getCircuitR1R2MilliOhmsPerMetre, getStandardCpcSize } from './resistance';
 
 export function calculateCircuit(
   loadKw: number,
@@ -61,7 +62,8 @@ export function calculateCircuit(
 
   // 7. Calculate Zs
   const getZs = (cable: any) => {
-    const resistanceMOhms = CABLE_RESISTANCE[cable.size] || (cable.size * 1.2); // Fallback if not in resistance table
+    const resistanceMOhms = getCircuitR1R2MilliOhmsPerMetre(cableType, cable.size);
+    if (resistanceMOhms === null) return Number.POSITIVE_INFINITY;
     // Apply 1.2 factor for conductor temperature rise (20°C to 70°C) as per BS 7671
     const r1r2 = (resistanceMOhms * lengthM * 1.2) / 1000;
     return ze + r1r2;
@@ -115,17 +117,7 @@ export function calculateCircuit(
   // 8. Calculate CPC Size for Single Core
   let cpcSize: number | undefined = undefined;
   if (cableType === CableType.PVC_SINGLE) {
-    const lineSize = finalCable.size;
-    if (lineSize <= 16) {
-      cpcSize = lineSize;
-    } else if (lineSize <= 35) {
-      cpcSize = 16;
-    } else {
-      cpcSize = Math.ceil(lineSize / 2);
-      // Find next standard size if needed, but for now just simple math
-      const standardSizes = [1, 1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120];
-      cpcSize = standardSizes.find(s => s >= (cpcSize || 0)) || lineSize;
-    }
+    cpcSize = getStandardCpcSize(finalCable.size);
   }
 
   return {

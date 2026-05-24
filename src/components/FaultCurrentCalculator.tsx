@@ -23,10 +23,10 @@ export default function FaultCurrentCalculator({ onShare }: FaultCurrentCalculat
 
     if (zsVal === 0) return null;
 
-    // For three phase, the PFC is usually taken as 2 * (Uo / Zs)
-    // where Uo is the phase-to-neutral voltage (230V).
+    // For three phase, the PFC is usually taken as 2 * (Uo / Zs),
+    // where Uo is derived from the entered line-to-line voltage.
     const multiplier = phaseType === 'three' ? 2 : 1;
-    const calculationVoltage = phaseType === 'three' ? 230 : vVal;
+    const calculationVoltage = phaseType === 'three' ? vVal / Math.sqrt(3) : vVal;
     const faultCurrentAmps = (calculationVoltage / zsVal) * multiplier;
     const faultCurrentKA = faultCurrentAmps / 1000;
     const isAdequate = (faultCurrentAmps <= capacityVal);

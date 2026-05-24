@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Ruler, Share2, Activity, AlertTriangle, CheckCircle2, History as HistoryIcon, Check } from 'lucide-react';
 import { DeviceType, CableType } from '../types';
 import { DEVICE_LIMITS, CABLE_DATABASE, VOLTAGES } from '../constants';
+import { getCircuitR1R2MilliOhmsPerMetre } from '../utils/resistance';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
 
@@ -36,21 +37,19 @@ export default function MaxLengthCalculator({ onShare }: MaxLengthCalculatorProp
     // Find Zs limit
     const zsLimit = DEVICE_LIMITS[deviceType][rating] || 0;
 
-    // R1+R2 per meter (approximate for T&E)
-    // 1.0: 43.4, 1.5: 29.0, 2.5: 18.0, 4.0: 11.0, 6.0: 7.4, 10.0: 4.4, 16.0: 2.8
-    const r1r2_per_m_map: Record<number, number> = {
-      1.0: 43.4, 1.5: 29.0, 2.5: 18.0, 4.0: 11.0, 6.0: 7.4, 10.0: 4.4, 16.0: 2.8
-    };
-    const r1r2_per_m = r1r2_per_m_map[sizeVal] || (44 / sizeVal); // fallback
+    const r1r2PerMetre = getCircuitR1R2MilliOhmsPerMetre(cableType, sizeVal);
+    const designR1R2PerMetre = r1r2PerMetre ? r1r2PerMetre * 1.2 : Number.POSITIVE_INFINITY;
 
     // Max length for Zs
-    const maxLenZs = (zsLimit - zeVal) / (r1r2_per_m / 1000);
+    const maxLenZs = Math.max(0, (zsLimit - zeVal) / (designR1R2PerMetre / 1000));
 
     // Max length for Voltage Drop
     // VD = (mV/A/m * I * L) / 1000
     // L = (VD_limit * 1000) / (mV/A/m * I)
-    const vdLimitVolts = (vdLimit / 100) * 230;
-    const maxLenVD = (vdLimitVolts * 1000) / (mvAm * loadVal);
+    const vdLimitVolts = (vdLimit / 100) * VOLTAGES.SINGLE_PHASE;
+    const maxLenVD = loadVal > 0 && mvAm > 0
+      ? (vdLimitVolts * 1000) / (mvAm * loadVal)
+      : Number.POSITIVE_INFINITY;
 
     const maxLen = Math.min(maxLenZs, maxLenVD);
     const isCompliant = lengthVal > 0 ? lengthVal <= maxLen : true;
@@ -62,7 +61,7 @@ export default function MaxLengthCalculator({ onShare }: MaxLengthCalculatorProp
       isCompliant,
       limitingFactor: maxLenZs < maxLenVD ? 'Zs Limit' : 'Voltage Drop'
     };
-  }, [deviceType, rating, cableSize, ze, allowedVD, loadAmps, enteredLength]);
+  }, [deviceType, rating, cableType, cableSize, ze, allowedVD, loadAmps, enteredLength]);
 
   const handleShare = () => {
     const text = `

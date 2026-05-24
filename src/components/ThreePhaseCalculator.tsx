@@ -19,10 +19,14 @@ export default function ThreePhaseCalculator({ onShare }: ThreePhaseCalculatorPr
   const lastSavedHistoryRef = React.useRef<string | null>(null);
 
   const calculation = useMemo(() => {
-    const vVal = parseFloat(voltage) || 400;
+    const parsedVoltage = parseFloat(voltage);
+    const vVal = Number.isFinite(parsedVoltage) && parsedVoltage > 0
+      ? parsedVoltage
+      : phaseType === 'three' ? 400 : 230;
     const iVal = parseFloat(current) || 0;
     const pVal = parseFloat(power) || 0;
-    const pfVal = parseFloat(pf) || 1;
+    const parsedPf = parseFloat(pf);
+    const pfVal = Number.isFinite(parsedPf) ? Math.min(Math.max(parsedPf, 0), 1) : 1;
     const multiplier = phaseType === 'three' ? Math.sqrt(3) : 1;
 
     if (calcDirection === 'toPower') {
@@ -36,7 +40,8 @@ export default function ThreePhaseCalculator({ onShare }: ThreePhaseCalculatorPr
         phaseType
       };
     } else {
-      const calculatedCurrent = (pVal * 1000) / (multiplier * vVal * pfVal);
+      const denominator = multiplier * vVal * pfVal;
+      const calculatedCurrent = denominator > 0 ? (pVal * 1000) / denominator : 0;
       return {
         power: pVal,
         current: calculatedCurrent,
