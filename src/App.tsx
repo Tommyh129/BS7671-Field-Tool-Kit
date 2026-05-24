@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Zap, 
@@ -54,6 +54,7 @@ import { checkRegulatoryUpdates, DEFAULT_REGULATORY_UPDATE, REGULATORY_CACHE_VER
 import { saveCalculation } from './services/historyService';
 import { auth, db } from './firebase';
 import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { InAppPurchase } from 'capacitor-plugin-purchase';
 import { Share as NativeShare } from '@capacitor/share';
@@ -244,6 +245,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [regulatoryInfo, setRegulatoryInfo] = useState<RegulatoryUpdate>(DEFAULT_REGULATORY_UPDATE);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [regulatoryCheckMessage, setRegulatoryCheckMessage] = useState<string | null>(null);
   const [recentTools, setRecentTools] = useState<AppMode[]>([]);
   const [hasApiKey, setHasApiKey] = useState(true);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
@@ -330,45 +332,114 @@ export default function App() {
   const shareRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
   const lastSavedHistoryRef = useRef<string | null>(null);
+  const regulatoryCheckInFlightRef = useRef(false);
 
-  const applyRegulatoryUpdates = (updates: RegulatoryUpdate) => {
+  const applyRegulatoryUpdates = useCallback((updates: RegulatoryUpdate) => {
     setRegulatoryInfo(updates);
     localStorage.setItem('bs7671_regulatory_info', JSON.stringify(updates));
     localStorage.setItem('bs7671_cache_time', Date.now().toString());
     localStorage.setItem('bs7671_cache_version', REGULATORY_CACHE_VERSION);
-  };
+  }, []);
+
+  const loadCachedRegulatoryInfo = useCallback(() => {
+    const cached = localStorage.getItem('bs7671_regulatory_info');
+    const cacheTime = localStorage.getItem('bs7671_cache_time');
+    const cacheVersion = localStorage.getItem('bs7671_cache_version');
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+
+    if (!cached || !cacheTime || cacheVersion !== REGULATORY_CACHE_VERSION) {
+      return false;
+    }
+
+    if ((now - parseInt(cacheTime, 10)) >= oneDay) {
+      return false;
+    }
+
+    try {
+      setRegulatoryInfo(JSON.parse(cached));
+      return true;
+    } catch (error) {
+      console.warn("Cached regulatory update was invalid, refreshing.", error);
+      return false;
+    }
+  }, []);
+
+  const refreshRegulatoryInfo = useCallback(async ({ force = false, silent = false } = {}) => {
+    if (regulatoryCheckInFlightRef.current) {
+      return;
+    }
+
+    regulatoryCheckInFlightRef.current = true;
+    setIsCheckingUpdates(true);
+    if (!silent) {
+      setRegulatoryCheckMessage(null);
+    }
+
+    try {
+      const updates = await checkRegulatoryUpdates({
+        force,
+        throwOnError: force,
+      });
+      applyRegulatoryUpdates(updates);
+      if (!silent) {
+        const checkedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setRegulatoryCheckMessage(`Checked ${checkedAt}: using ${updates.version} ${updates.amendment}.`);
+      }
+    } catch (error: any) {
+      console.error("Failed to fetch regulatory updates:", error);
+      if (error?.message?.includes("Requested entity was not found")) {
+        setHasApiKey(false);
+      }
+      if (!silent) {
+        setRegulatoryCheckMessage('Could not contact the update service. Saved BS 7671 data is still being used.');
+      }
+    } finally {
+      regulatoryCheckInFlightRef.current = false;
+      setIsCheckingUpdates(false);
+    }
+  }, [applyRegulatoryUpdates]);
 
   // --- Regulatory Logic ---
   useEffect(() => {
-    const fetchUpdates = async () => {
-      // Check cache first
-      const cached = localStorage.getItem('bs7671_regulatory_info');
-      const cacheTime = localStorage.getItem('bs7671_cache_time');
-      const cacheVersion = localStorage.getItem('bs7671_cache_version');
-      const now = Date.now();
-      const ONE_DAY = 24 * 60 * 60 * 1000;
-
-      if (cached && cacheTime && cacheVersion === REGULATORY_CACHE_VERSION && (now - parseInt(cacheTime)) < ONE_DAY) {
-        try {
-          setRegulatoryInfo(JSON.parse(cached));
-          return;
-        } catch (error) {
-          console.warn("Cached regulatory update was invalid, refreshing.", error);
-        }
-      }
-
-      setIsCheckingUpdates(true);
-      try {
-        const updates = await checkRegulatoryUpdates();
-        applyRegulatoryUpdates(updates);
-      } catch (error) {
-        console.error("Failed to fetch regulatory updates:", error);
-      } finally {
-        setIsCheckingUpdates(false);
+    const refreshIfNeeded = () => {
+      if (!loadCachedRegulatoryInfo()) {
+        refreshRegulatoryInfo({ silent: true });
       }
     };
-    fetchUpdates();
-  }, []);
+
+    refreshIfNeeded();
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        refreshIfNeeded();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    let isMounted = true;
+    let removeAppStateListener: (() => void) | undefined;
+    if (Capacitor.isNativePlatform()) {
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          refreshIfNeeded();
+        }
+      }).then(handle => {
+        if (isMounted) {
+          removeAppStateListener = () => handle.remove();
+        } else {
+          handle.remove();
+        }
+      });
+    }
+
+    return () => {
+      isMounted = false;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      removeAppStateListener?.();
+    };
+  }, [loadCachedRegulatoryInfo, refreshRegulatoryInfo]);
 
   // --- Core Type Logic ---
   // We keep the state but remove the restrictive filtering and auto-switching
@@ -1164,19 +1235,7 @@ Calculated via BS7671 Field Toolkit
             <h3 className="font-bold text-white">BS 7671 Compliance</h3>
           </div>
           <button 
-            onClick={async () => {
-              setIsCheckingUpdates(true);
-              try {
-                const updates = await checkRegulatoryUpdates();
-                applyRegulatoryUpdates(updates);
-              } catch (error: any) {
-                if (error?.message?.includes("Requested entity was not found")) {
-                  setHasApiKey(false);
-                }
-              } finally {
-                setIsCheckingUpdates(false);
-              }
-            }}
+            onClick={() => refreshRegulatoryInfo({ force: true })}
             disabled={isCheckingUpdates}
             className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors disabled:opacity-50"
           >
@@ -1207,6 +1266,11 @@ Calculated via BS7671 Field Toolkit
         <p className="text-gray-500 text-[10px] mt-4 leading-relaxed italic">
           * Calculations are based on {regulatoryInfo.version} {regulatoryInfo.amendment} requirements.
         </p>
+        {regulatoryCheckMessage && (
+          <p className="text-emerald-400 text-[10px] mt-3 leading-relaxed">
+            {regulatoryCheckMessage}
+          </p>
+        )}
       </div>
 
       {recentTools.length > 0 && (

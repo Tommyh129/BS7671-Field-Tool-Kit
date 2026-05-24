@@ -39,12 +39,13 @@ const DEFAULT_REGULATORY_UPDATE: RegulatoryUpdate = {
   amendment: "Amendment 4:2026",
   date: "15 April 2026",
   summary:
-    "IET and BSI have published Amendment 4:2026 to BS 7671:2018. The update introduces new requirements for stationary secondary batteries, Power over Ethernet, and further harmonised standards changes. BS 7671:2018+A2:2022+A3:2024 is due to be withdrawn after the transition period.",
+    "IET and BSI published Amendment 4:2026 to BS 7671:2018 on 15 April 2026, introducing updates for stationary secondary batteries, medical locations, functional earthing, Power over Ethernet, and harmonised standards.",
   changes: [
     "New chapter for stationary secondary batteries and energy storage systems.",
-    "New Section 716 for Power over Ethernet installations.",
-    "Further harmonised document and IEC standard updates across BS 7671.",
-    "Previous BS 7671:2018+A2:2022+A3:2024 edition enters a six-month transition period."
+    "Major revision of Section 710 Medical Locations.",
+    "New requirements for functional earthing and functional equipotential bonding for ICT systems.",
+    "New Section 716 requirements for Power over Ethernet installations.",
+    "BS 7671:2018+A2:2022+A3:2024 enters a six-month transition period before withdrawal."
   ]
 };
 
@@ -158,7 +159,13 @@ async function startServer() {
 
   app.get("/api/regulatory-updates", async (req, res) => {
     const now = Date.now();
-    if (regulatoryCache && regulatoryCache.expiresAt > now) {
+    const forceRefresh = req.query.refresh === "true" || req.query.refresh === "1";
+
+    if (forceRefresh) {
+      res.setHeader("Cache-Control", "no-store");
+    }
+
+    if (!forceRefresh && regulatoryCache && regulatoryCache.expiresAt > now) {
       return res.json(regulatoryCache.value);
     }
 
