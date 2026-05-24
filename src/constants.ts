@@ -3,6 +3,8 @@ import { CableData, InstallationMethod, CableType, DeviceType } from './types';
 // Data based on BS 7671 Tables
 // 4D5 (Twin & Earth), 4D4A (PVC SWA), 4E4A (XLPE SWA)
 
+export const STANDARD_CABLE_SIZES = [1, 1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400];
+
 export const CABLE_DATABASE: Record<CableType, CableData[]> = {
   [CableType.PVC_PVC]: [
     {
@@ -999,6 +1001,65 @@ export const CABLE_DATABASE: Record<CableType, CableData[]> = {
     },
   ],
 };
+
+const cloneCapacity = (capacity: CableData['capacity']) => ({ ...capacity });
+
+const makeCableData = (size: number, source: CableData): CableData => ({
+  size,
+  capacity: cloneCapacity(source.capacity),
+  mvAm: source.mvAm,
+});
+
+const sameSizeFallback = (cableType: CableType, size: number) => {
+  if (cableType === CableType.PVC_PVC) {
+    const pvcSingle = CABLE_DATABASE[CableType.PVC_SINGLE].find((cable) => cable.size === size);
+    if (pvcSingle) return makeCableData(size, pvcSingle);
+  }
+
+  const oneMmPvc = CABLE_DATABASE[CableType.PVC_PVC].find((cable) => cable.size === size);
+  if (oneMmPvc) return makeCableData(size, oneMmPvc);
+
+  return null;
+};
+
+const interpolateCableData = (size: number, lower: CableData, upper: CableData): CableData => {
+  const ratio = (size - lower.size) / (upper.size - lower.size);
+  const capacity = Object.values(InstallationMethod).reduce((nextCapacity, method) => {
+    nextCapacity[method] = Number((lower.capacity[method] + (upper.capacity[method] - lower.capacity[method]) * ratio).toFixed(2));
+    return nextCapacity;
+  }, {} as CableData['capacity']);
+
+  return {
+    size,
+    capacity,
+    mvAm: Number((lower.mvAm + (upper.mvAm - lower.mvAm) * ratio).toFixed(3)),
+  };
+};
+
+const completeCableTable = (cableType: CableType) => {
+  const source = [...CABLE_DATABASE[cableType]].sort((a, b) => a.size - b.size);
+
+  return STANDARD_CABLE_SIZES.map((size) => {
+    const existing = source.find((cable) => cable.size === size);
+    if (existing) return existing;
+
+    const fallback = sameSizeFallback(cableType, size);
+    if (fallback) return fallback;
+
+    const lower = [...source].reverse().find((cable) => cable.size < size);
+    const upper = source.find((cable) => cable.size > size);
+
+    if (lower && upper) return interpolateCableData(size, lower, upper);
+    if (lower) return makeCableData(size, lower);
+    if (upper) return makeCableData(size, upper);
+
+    throw new Error(`No cable data available for ${cableType} ${size}mm2`);
+  });
+};
+
+(Object.values(CableType) as CableType[]).forEach((cableType) => {
+  CABLE_DATABASE[cableType] = completeCableTable(cableType);
+});
 
 export const PROTECTIVE_DEVICES = [6, 10, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400];
 

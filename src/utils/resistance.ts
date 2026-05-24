@@ -31,7 +31,9 @@ export const getCircuitR1R2MilliOhmsPerMetre = (cableType: CableType, lineSize: 
   const lineResistance = getLineConductorResistance(lineSize);
   if (lineResistance === null) return null;
 
-  const cpcSize = cableType === CableType.PVC_SINGLE ? getStandardCpcSize(lineSize) : lineSize;
+  const cpcSize = cableType === CableType.PVC_SINGLE || cableType === CableType.PVC_PVC
+    ? getStandardCpcSize(lineSize)
+    : lineSize;
   const cpcResistance = getLineConductorResistance(cpcSize);
   if (cpcResistance === null) return null;
 
