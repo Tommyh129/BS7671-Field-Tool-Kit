@@ -147,6 +147,13 @@ const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
 const DEFAULT_PRO_PRODUCT_ID = 'pro_subscription';
 const PRO_PRODUCT_TYPE = 'subscription';
 type StorePurchaseLike = { productId?: string | null };
+type HistorySaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+type HistorySavePayload = {
+  type: CalculationHistory['type'];
+  title: string;
+  inputs: Record<string, unknown>;
+  results: Record<string, unknown>;
+};
 
 const envValue = (key: string) => {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
@@ -340,11 +347,13 @@ export default function App() {
   const [isSavingImage, setIsSavingImage] = useState(false);
   const [isSavingPDF, setIsSavingPDF] = useState(false);
   const [isSavingTextPDF, setIsSavingTextPDF] = useState(false);
-  const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const [historySaveStatus, setHistorySaveStatus] = useState<HistorySaveStatus>('idle');
   const shareRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
   const lastSavedHistoryRef = useRef<string | null>(null);
   const regulatoryCheckInFlightRef = useRef(false);
+  const historySaveResetRef = useRef<number | null>(null);
+  const isSavingHistory = historySaveStatus === 'saving';
 
   const applyRegulatoryUpdates = useCallback((updates: RegulatoryUpdate) => {
     setRegulatoryInfo(updates);
@@ -941,6 +950,75 @@ export default function App() {
     return null;
   }, [targetCurrent, method, cableType, mode]);
 
+  const currentHistoryPayload = useMemo<HistorySavePayload | null>(() => {
+    if (mode === AppMode.CABLE_FINDER) {
+      const target = parseFloat(targetCurrent) || 0;
+      if (target <= 0 || !cableFinderResult) return null;
+
+      return {
+        type: 'cable_finder',
+        title: `Cable Finder: ${target}A`,
+        inputs: { targetCurrent, cableCoreType, cableType, method },
+        results: {
+          recommendedCableSize: cableFinderResult.size,
+          methodCapacity: cableFinderResult.capacity[method],
+          mvAm: cableFinderResult.mvAm,
+          spareCapacity: cableFinderResult.capacity[method] - target,
+          isAdequate: true
+        }
+      };
+    }
+
+    if ((mode === AppMode.SMART_CIRCUIT || mode === AppMode.VOLTAGE_DROP) && result) {
+      return {
+        type: 'circuit',
+        title: mode === AppMode.VOLTAGE_DROP
+          ? `Voltage Drop: ${loadKw}kW / ${lengthM}m`
+          : `Circuit: ${loadKw}kW / ${lengthM}m`,
+        inputs: { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType },
+        results: {
+          cableSize: result.cableSize,
+          protectiveDevice: result.protectiveDevice,
+          voltageDrop: result.voltageDrop,
+          voltageDropPercentage: result.voltageDropPercentage,
+          isCompliant: result.isCompliant,
+          zs: result.zs,
+          maxZs: result.maxZs
+        }
+      };
+    }
+
+    return null;
+  }, [mode, targetCurrent, cableFinderResult, cableCoreType, cableType, method, result, loadKw, lengthM, supplyType, circuitType, ze, deviceType]);
+
+  useEffect(() => {
+    setHistorySaveStatus('idle');
+  }, [currentHistoryPayload]);
+
+  const setTimedHistorySaveStatus = useCallback((status: HistorySaveStatus) => {
+    if (historySaveResetRef.current) {
+      window.clearTimeout(historySaveResetRef.current);
+      historySaveResetRef.current = null;
+    }
+
+    setHistorySaveStatus(status);
+
+    if (status === 'saved' || status === 'error') {
+      historySaveResetRef.current = window.setTimeout(() => {
+        setHistorySaveStatus('idle');
+        historySaveResetRef.current = null;
+      }, 2200);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (historySaveResetRef.current) {
+        window.clearTimeout(historySaveResetRef.current);
+      }
+    };
+  }, []);
+
   const handleCalculate = () => {
     setShowResults(true);
   };
@@ -1135,56 +1213,39 @@ Calculated via BS7671 Field Toolkit
   };
 
   const handleSaveHistory = async () => {
-    if (!result || isSavingHistory) return;
-    setIsSavingHistory(true);
+    if (isSavingHistory) return;
+    if (!currentHistoryPayload) {
+      setTimedHistorySaveStatus('error');
+      return;
+    }
+
+    setTimedHistorySaveStatus('saving');
     try {
       await saveCalculation(
         user?.uid,
-        'circuit',
-        `Circuit: ${loadKw}kW / ${lengthM}m`,
-        { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType },
-        { 
-          cableSize: result.cableSize, 
-          protectiveDevice: result.protectiveDevice, 
-          voltageDrop: result.voltageDrop, 
-          voltageDropPercentage: result.voltageDropPercentage,
-          isCompliant: result.isCompliant,
-          zs: result.zs,
-          maxZs: result.maxZs
-        }
+        currentHistoryPayload.type,
+        currentHistoryPayload.title,
+        currentHistoryPayload.inputs,
+        currentHistoryPayload.results
       );
-      setTimeout(() => setIsSavingHistory(false), 2000);
+      setTimedHistorySaveStatus('saved');
     } catch (error) {
       console.error('Error saving to history:', error);
-      setIsSavingHistory(false);
+      setTimedHistorySaveStatus('error');
     }
   };
 
   useEffect(() => {
-    if (!result || !showResults) return;
+    if (!currentHistoryPayload || !showResults) return;
 
-    const payload = {
-      type: 'circuit' as const,
-      title: `Circuit: ${loadKw}kW / ${lengthM}m`,
-      inputs: { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType },
-      results: {
-        cableSize: result.cableSize,
-        protectiveDevice: result.protectiveDevice,
-        voltageDrop: result.voltageDrop,
-        voltageDropPercentage: result.voltageDropPercentage,
-        isCompliant: result.isCompliant,
-        zs: result.zs,
-        maxZs: result.maxZs
-      }
-    };
-    const signature = JSON.stringify(payload);
+    const signature = JSON.stringify(currentHistoryPayload);
     if (lastSavedHistoryRef.current === signature) return;
     lastSavedHistoryRef.current = signature;
 
-    saveCalculation(user?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
-      console.error('Error auto-saving circuit history:', error);
+    saveCalculation(user?.uid, currentHistoryPayload.type, currentHistoryPayload.title, currentHistoryPayload.inputs, currentHistoryPayload.results).catch(error => {
+      console.error('Error auto-saving calculation history:', error);
     });
-  }, [result, showResults, loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType, user]);
+  }, [currentHistoryPayload, showResults, user]);
 
   const goHome = () => {
     setMode(AppMode.HOME);
@@ -1545,6 +1606,17 @@ Calculated via BS7671 Field Toolkit
       </div>
     );
   }
+
+  const saveHistoryButtonClass = historySaveStatus === 'error'
+    ? 'flex-1 bg-red-500/10 border border-red-500/30 py-5 rounded-3xl font-bold text-red-400 hover:bg-red-500/20 transition-colors flex items-center justify-center gap-2 disabled:opacity-50'
+    : 'flex-1 bg-emerald-500/10 border border-emerald-500/20 py-5 rounded-3xl font-bold text-emerald-500 hover:bg-emerald-500/20 transition-colors flex items-center justify-center gap-2 disabled:opacity-50';
+  const saveHistoryButtonLabel = historySaveStatus === 'saving'
+    ? 'Saving...'
+    : historySaveStatus === 'saved'
+      ? 'Saved'
+      : historySaveStatus === 'error'
+        ? 'Save failed'
+        : 'Save History';
 
   return (
     <div className={`min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30`}>
@@ -2313,10 +2385,18 @@ Calculated via BS7671 Field Toolkit
                     <button 
                       onClick={handleSaveHistory}
                       disabled={isSavingHistory}
-                      className="flex-1 bg-emerald-500/10 border border-emerald-500/20 py-5 rounded-3xl font-bold text-emerald-500 hover:bg-emerald-500/20 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                      className={saveHistoryButtonClass}
                     >
-                      {isSavingHistory ? <Check size={18} /> : <HistoryIcon size={18} />}
-                      {isSavingHistory ? 'Saved' : 'Save History'}
+                      {historySaveStatus === 'saving' ? (
+                        <div className="w-[18px] h-[18px] border-2 border-current/25 border-t-current rounded-full animate-spin" />
+                      ) : historySaveStatus === 'saved' ? (
+                        <Check size={18} />
+                      ) : historySaveStatus === 'error' ? (
+                        <AlertTriangle size={18} />
+                      ) : (
+                        <HistoryIcon size={18} />
+                      )}
+                      {saveHistoryButtonLabel}
                     </button>
                   </div>
 

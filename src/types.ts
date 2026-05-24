@@ -99,7 +99,7 @@ export interface CalculationResult {
 export interface CalculationHistory {
   id: string;
   userId: string;
-  type: 'circuit' | 'zs' | 'fault' | 'three-phase' | 'electrode' | 'cable_resistance' | 'max_length';
+  type: 'circuit' | 'zs' | 'fault' | 'three-phase' | 'electrode' | 'cable_resistance' | 'max_length' | 'cable_finder';
   title: string;
   inputs: any;
   results: any;

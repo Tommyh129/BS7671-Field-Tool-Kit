@@ -70,6 +70,9 @@ export default function History({ onSelect }: HistoryProps) {
       case 'fault': return <AlertTriangle className="text-orange-500" size={18} />;
       case 'three-phase': return <Cpu className="text-purple-500" size={18} />;
       case 'electrode': return <Waves className="text-cyan-500" size={18} />;
+      case 'cable_resistance': return <Ruler className="text-blue-500" size={18} />;
+      case 'max_length': return <Ruler className="text-purple-500" size={18} />;
+      case 'cable_finder': return <Search className="text-purple-500" size={18} />;
       default: return <FileText className="text-gray-500" size={18} />;
     }
   };
