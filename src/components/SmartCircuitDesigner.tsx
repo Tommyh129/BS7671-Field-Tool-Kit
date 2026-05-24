@@ -222,15 +222,23 @@ Calculated via BS7671 Field Toolkit
           </div>
           <div>
             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Installation Method</label>
-            <select 
-              value={method}
-              onChange={(e) => setMethod(e.target.value as InstallationMethod)}
-              className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none text-sm"
-            >
+            <div className="grid gap-2 max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
               {Object.values(InstallationMethod).map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMethod(m)}
+                  className={`w-full min-w-0 py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border flex items-start justify-between gap-3 ${
+                    method === m
+                      ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20'
+                      : 'bg-black/40 text-gray-400 border-hardware-border hover:border-white/20'
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{m}</span>
+                  {method === m && <CheckCircle2 size={16} className="shrink-0" />}
+                </button>
               ))}
-            </select>
+            </div>
           </div>
         </div>
 

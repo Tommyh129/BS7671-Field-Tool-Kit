@@ -2202,13 +2202,13 @@ Calculated via BS7671 Field Toolkit
                           <button
                             key={m}
                             onClick={() => setMethod(m)}
-                            className={`py-4 px-5 rounded-2xl text-xs font-bold text-left transition-all border flex items-center justify-between shrink-0 ${
+                            className={`w-full min-w-0 py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border flex items-start justify-between gap-3 ${
                               method === m 
                                 ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
                                 : 'bg-hardware-card text-gray-400 border-hardware-border hover:border-white/20'
                             }`}
                           >
-                            <span className="truncate pr-2">{m}</span>
+                            <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{m}</span>
                             {method === m && <CheckCircle2 size={16} className="shrink-0" />}
                           </button>
                         ))}
