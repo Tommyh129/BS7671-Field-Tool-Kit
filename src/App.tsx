@@ -143,8 +143,65 @@ const PRIVACY_POLICY_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.
 const TERMS_OF_SERVICE_URL = 'https://app.termly.io/policy-viewer/policy.html?policyUUID=6b10edd9-015b-429b-88bc-e8e2c415ed7d';
 const SUPPORT_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app?page=support';
 const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
-const PRO_PRODUCT_ID = 'pro_subscription'; // Match your App Store/Play Store ID
+const DEFAULT_PRO_PRODUCT_ID = 'pro_subscription';
 const PRO_PRODUCT_TYPE = 'subscription';
+type StorePurchaseLike = { productId?: string | null };
+
+const envValue = (key: string) => {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  return env?.[key]?.trim();
+};
+
+const productIdList = (...values: Array<string | undefined>) => {
+  const ids = values
+    .flatMap(value => (value || '').split(','))
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(ids));
+};
+
+const nativeProProductIds = () => {
+  const platform = Capacitor.getPlatform();
+  const commonIds = [
+    envValue('VITE_PRO_PRODUCT_ID'),
+    DEFAULT_PRO_PRODUCT_ID,
+    'com.bs7671.fieldtoolkit.pro_subscription',
+    'bs7671_pro_subscription',
+    envValue('VITE_PRO_PRODUCT_ID_ALIASES')
+  ];
+
+  if (platform === 'ios') {
+    return productIdList(envValue('VITE_IOS_PRO_PRODUCT_ID'), ...commonIds);
+  }
+
+  if (platform === 'android') {
+    return productIdList(envValue('VITE_ANDROID_PRO_PRODUCT_ID'), ...commonIds);
+  }
+
+  return productIdList(...commonIds);
+};
+
+const productIdLabel = (productIds: string[]) => productIds.map(id => `"${id}"`).join(', ');
+
+const isKnownProProductId = (productId?: string | null) => {
+  return Boolean(productId && nativeProProductIds().includes(productId));
+};
+
+const hasStoreProEntitlement = (purchases: StorePurchaseLike[]) => {
+  const activeProductIds = purchases
+    .map(purchase => purchase.productId)
+    .filter((productId): productId is string => Boolean(productId));
+
+  if (activeProductIds.some(isKnownProProductId)) {
+    return true;
+  }
+
+  // The native app currently sells one durable entitlement: Pro. If the store
+  // returns an active purchase with a renamed product ID, keep paid users in.
+  return activeProductIds.length > 0;
+};
+
 const nativeProStorageKey = (uid: string) => `bs7671_native_pro_${uid}`;
 const nativePurchaseUserOptions = (uid: string) => {
   // StoreKit appAccountToken must be a UUID. Firebase UIDs are not UUIDs, so
@@ -152,12 +209,12 @@ const nativePurchaseUserOptions = (uid: string) => {
   return Capacitor.getPlatform() === 'ios' ? {} : { userId: uid };
 };
 
-const productUnavailableMessage = (productId: string) => {
+const productUnavailableMessage = (productIds: string[]) => {
   if (Capacitor.getPlatform() === 'ios') {
-    return `Apple did not return the subscription product "${productId}". Check App Store Connect: the subscription Product ID must match exactly, be attached to bundle ID com.bs7671.fieldtoolkit, have price/localisation/review details completed, be available for sale/testing, and Paid Apps agreements must be active. If you already subscribed, use Restore Purchases.`;
+    return `Apple did not return any configured subscription product (${productIdLabel(productIds)}). Check App Store Connect: the subscription Product ID must match exactly, be attached to bundle ID com.bs7671.fieldtoolkit, have price/localisation/review details completed, be available for sale/testing, and Paid Apps agreements must be active. If you already subscribed, use Restore Purchases.`;
   }
 
-  return `Product ${productId} was not returned by the store. Check the product ID, package name, signing key, and closed testing availability.`;
+  return `Google Play did not return any configured subscription product (${productIdLabel(productIds)}). Check the product ID, package name, signing key, active base plan, and closed testing availability. If you already subscribed, use Restore Purchases.`;
 };
 
 export default function App() {
@@ -544,9 +601,8 @@ export default function App() {
     const checkActivePurchases = async () => {
       try {
         const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
-        console.log("App: Active Purchases ->", purchases.length);
-        const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
-        setNativeProAccess(user.uid, hasPro);
+        console.log("App: Active Purchases ->", purchases);
+        const hasPro = hasStoreProEntitlement(purchases);
         if (hasPro) {
           await handleSuccessfulPurchase();
         }
@@ -590,8 +646,8 @@ export default function App() {
       try {
         console.log("App: Restoring Native Purchases...");
         const { purchases } = await InAppPurchase.restorePurchases(nativePurchaseUserOptions(user.uid));
-        const hasPro = purchases.some(p => p.productId === PRO_PRODUCT_ID);
-        setNativeProAccess(user.uid, hasPro);
+        console.log("App: Restored Native Purchases ->", purchases);
+        const hasPro = hasStoreProEntitlement(purchases);
         if (hasPro) {
           await handleSuccessfulPurchase();
         } else {
@@ -671,24 +727,32 @@ export default function App() {
     // Use Native IAP if on mobile
     if (Capacitor.isNativePlatform()) {
       try {
-        console.log("App: Starting Native Purchase flow for:", PRO_PRODUCT_ID);
+        const productIds = nativeProProductIds();
+        console.log("App: Starting Native Purchase flow for:", productIds);
         const { allowed } = await InAppPurchase.canMakePurchases();
         if (!allowed) {
           throw new Error('Purchases are not available on this device or account.');
         }
 
         const { products } = await InAppPurchase.getProducts({
-          productIds: [PRO_PRODUCT_ID],
+          productIds,
           productType: PRO_PRODUCT_TYPE as any
         });
         console.log("App: Store products returned ->", products);
 
-        if (!products.some(product => product.productId === PRO_PRODUCT_ID)) {
-          throw new Error(productUnavailableMessage(PRO_PRODUCT_ID));
+        const product = products.find(item => productIds.includes(item.productId)) || products[0];
+        if (!product) {
+          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
+          if (hasStoreProEntitlement(purchases)) {
+            await handleSuccessfulPurchase();
+            return;
+          }
+
+          throw new Error(productUnavailableMessage(productIds));
         }
 
         const transaction = await InAppPurchase.purchaseProduct({ 
-          productId: PRO_PRODUCT_ID,
+          productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
           ...nativePurchaseUserOptions(user.uid)
         }) as any;
@@ -703,6 +767,15 @@ export default function App() {
         }
       } catch (error: any) {
         console.error("App: Native Purchase failed", error);
+        try {
+          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
+          if (hasStoreProEntitlement(purchases)) {
+            await handleSuccessfulPurchase();
+            return;
+          }
+        } catch (restoreError) {
+          console.error("App: Failed to re-check purchases after purchase error", restoreError);
+        }
         alert(`Purchase failed: ${error?.message || 'Unknown error'}. Please try again.`);
       } finally {
         setIsUpgrading(false);
@@ -1390,7 +1463,7 @@ Calculated via BS7671 Field Toolkit
             <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest animate-pulse mb-2">
               {isSyncing ? "Syncing Subscription..." : "Initializing Suite..."}
             </p>
-            <p className="text-gray-700 text-[8px] uppercase tracking-widest">BS7671 Field Toolkit v1.0.8</p>
+            <p className="text-gray-700 text-[8px] uppercase tracking-widest">BS7671 Field Toolkit v1.0.9</p>
           </div>
         </div>
       </div>
