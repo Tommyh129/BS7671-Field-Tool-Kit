@@ -171,23 +171,24 @@ const productIdList = (...values: Array<string | undefined>) => {
 
 const nativeProProductIds = () => {
   const platform = Capacitor.getPlatform();
-  const commonIds = [
-    envValue('VITE_PRO_PRODUCT_ID'),
-    DEFAULT_PRO_PRODUCT_ID,
-    'com.bs7671.fieldtoolkit.pro_subscription',
-    'bs7671_pro_subscription',
-    envValue('VITE_PRO_PRODUCT_ID_ALIASES')
-  ];
 
   if (platform === 'ios') {
-    return productIdList(envValue('VITE_IOS_PRO_PRODUCT_ID'), ...commonIds);
+    return productIdList(envValue('VITE_IOS_PRO_PRODUCT_ID') || DEFAULT_PRO_PRODUCT_ID);
   }
 
   if (platform === 'android') {
-    return productIdList(envValue('VITE_ANDROID_PRO_PRODUCT_ID'), ...commonIds);
+    const androidProductId =
+      envValue('VITE_ANDROID_PRO_PRODUCT_ID') ||
+      envValue('VITE_PRO_PRODUCT_ID') ||
+      DEFAULT_PRO_PRODUCT_ID;
+
+    return productIdList(
+      androidProductId,
+      envValue('VITE_PRO_PRODUCT_ID_ALIASES')
+    );
   }
 
-  return productIdList(...commonIds);
+  return productIdList(envValue('VITE_PRO_PRODUCT_ID') || DEFAULT_PRO_PRODUCT_ID);
 };
 
 const productIdLabel = (productIds: string[]) => productIds.map(id => `"${id}"`).join(', ');
@@ -219,7 +220,7 @@ const nativePurchaseUserOptions = (uid: string) => {
 
 const productUnavailableMessage = (productIds: string[]) => {
   if (Capacitor.getPlatform() === 'ios') {
-    return `Apple did not return any configured subscription product (${productIdLabel(productIds)}). Check App Store Connect: the subscription Product ID must match exactly, be attached to bundle ID com.bs7671.fieldtoolkit, have price/localisation/review details completed, be available for sale/testing, and Paid Apps agreements must be active. If you already subscribed, use Restore Purchases.`;
+    return `Apple StoreKit did not return the configured subscription product (${productIdLabel(productIds)}). Reinstall the latest TestFlight build and check the App ID/provisioning profile has In-App Purchase enabled for com.bs7671.fieldtoolkit. If you already subscribed, use Restore Purchases.`;
   }
 
   return `Google Play did not return any configured subscription product (${productIdLabel(productIds)}). Check the product ID, package name, signing key, active base plan, and closed testing availability. If you already subscribed, use Restore Purchases.`;
