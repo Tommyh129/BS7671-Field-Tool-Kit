@@ -50,11 +50,14 @@ import EarthElectrodeCalculator from './components/EarthElectrodeCalculator';
 import ThreePhaseCalculator from './components/ThreePhaseCalculator';
 import SmartCircuitDesigner from './components/SmartCircuitDesigner';
 import History from './components/History';
+import ModalSheet from './components/ModalSheet';
 import { checkRegulatoryUpdates, DEFAULT_REGULATORY_UPDATE, REGULATORY_CACHE_VERSION, RegulatoryUpdate } from './services/geminiService';
+import { getApiUrl } from './services/api';
 import { saveCalculation } from './services/historyService';
 import { auth, db } from './firebase';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
+import { Browser as CapacitorBrowser } from '@capacitor/browser';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { InAppPurchase } from 'capacitor-plugin-purchase';
 import { Share as NativeShare } from '@capacitor/share';
@@ -67,9 +70,13 @@ import {
   User,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   signInWithCredential,
   updateProfile
 } from 'firebase/auth';
+import type { AuthCredential } from 'firebase/auth';
 import { 
   doc, 
   onSnapshot, 
@@ -140,9 +147,10 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 // --- Constants ---
-const PRIVACY_POLICY_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app?page=privacy';
-const TERMS_OF_SERVICE_URL = 'https://app.termly.io/policy-viewer/policy.html?policyUUID=6b10edd9-015b-429b-88bc-e8e2c415ed7d';
-const SUPPORT_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app?page=support';
+const PUBLIC_APP_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app';
+const PRIVACY_POLICY_URL = `${PUBLIC_APP_URL}?page=privacy`;
+const TERMS_OF_SERVICE_URL = `${PUBLIC_APP_URL}?page=terms`;
+const SUPPORT_URL = `${PUBLIC_APP_URL}?page=support`;
 const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
 const DEFAULT_PRO_PRODUCT_ID = 'pro_subscription';
 const PRO_PRODUCT_TYPE = 'subscription';
@@ -226,6 +234,67 @@ const productUnavailableMessage = (productIds: string[]) => {
   return `Google Play did not return any configured subscription product (${productIdLabel(productIds)}). Check the product ID, package name, signing key, active base plan, and closed testing availability. If you already subscribed, use Restore Purchases.`;
 };
 
+const authErrorCode = (error: unknown) => {
+  if (!error || typeof error !== 'object') return '';
+  const code = 'code' in error ? String(error.code) : '';
+  if (code.startsWith('auth/')) return code;
+
+  const message = 'message' in error ? String(error.message) : '';
+  const match = message.match(/auth\/[a-z-]+/i);
+  return match?.[0]?.toLowerCase() || '';
+};
+
+const friendlyAuthError = (error: unknown, action: 'sign-in' | 'sign-up' | 'delete' = 'sign-in') => {
+  const code = authErrorCode(error);
+
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return 'An account already exists for this email address. Sign in instead.';
+    case 'auth/invalid-email':
+      return 'Enter a valid email address.';
+    case 'auth/weak-password':
+      return 'Choose a stronger password with at least six characters.';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return action === 'delete'
+        ? 'Verification failed. Check your password or sign-in account and try again.'
+        : 'The email address or password is incorrect.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Contact support for assistance.';
+    case 'auth/network-request-failed':
+      return 'A network error occurred. Check your connection and try again.';
+    case 'auth/too-many-requests':
+      return 'Too many attempts were made. Wait a few minutes and try again.';
+    case 'auth/account-exists-with-different-credential':
+      return 'This email uses a different sign-in method. Try the provider originally used.';
+    case 'auth/credential-already-in-use':
+      return 'This sign-in account is already connected to another user.';
+    case 'auth/operation-not-allowed':
+      return 'This sign-in method is temporarily unavailable. Contact support.';
+    case 'auth/popup-closed-by-user':
+    case 'auth/cancelled-popup-request':
+      return 'Sign-in was cancelled.';
+    case 'auth/requires-recent-login':
+      return 'For security, verify your identity again before deleting the account.';
+    default:
+      return action === 'sign-up'
+        ? 'The account could not be created. Check the details and try again.'
+        : action === 'delete'
+          ? 'Your identity could not be verified. Please try again.'
+          : 'Sign-in failed. Check your details and try again.';
+  }
+};
+
+const openExternalUrl = async (url: string) => {
+  if (Capacitor.isNativePlatform()) {
+    await CapacitorBrowser.open({ url });
+    return;
+  }
+
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
+
 const HeaderLogoMark = () => (
   <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-emerald-500 shadow-lg shadow-emerald-500/20 shrink-0 relative" aria-hidden="true">
     <span className="absolute inset-0 flex items-center justify-center text-black/25 text-[9px] font-black tracking-tighter">
@@ -270,12 +339,14 @@ export default function App() {
   const [hasApiKey, setHasApiKey] = useState(true);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 
-  // Handle URL parameters for deep linking (Privacy, Account Deletion)
+  // Handle URL parameters for public legal/support routes.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const page = params.get('page');
     if (page === 'privacy') {
       setMode(AppMode.PRIVACY);
+    } else if (page === 'terms') {
+      setMode(AppMode.TERMS);
     } else if (page === 'delete-account') {
       setMode(AppMode.ACCOUNT_DELETION);
     } else if (page === 'support') {
@@ -325,6 +396,7 @@ export default function App() {
   const [cleanMode, setCleanMode] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
   
@@ -588,7 +660,7 @@ export default function App() {
     testConnection();
   }, []);
 
-  const handleNativeSocialLogin = async (providerType: 'google' | 'apple') => {
+  const getNativeSocialCredential = async (providerType: 'google' | 'apple'): Promise<AuthCredential> => {
     const result = providerType === 'google'
       ? await FirebaseAuthentication.signInWithGoogle({
           skipNativeAuth: true,
@@ -610,8 +682,7 @@ export default function App() {
         nativeCredential?.idToken || null,
         nativeCredential?.accessToken || undefined
       );
-      await signInWithCredential(auth, credential);
-      return;
+      return credential;
     }
 
     if (!nativeCredential?.idToken) {
@@ -623,6 +694,11 @@ export default function App() {
       idToken: nativeCredential.idToken,
       rawNonce: nativeCredential.nonce
     });
+    return credential;
+  };
+
+  const handleNativeSocialLogin = async (providerType: 'google' | 'apple') => {
+    const credential = await getNativeSocialCredential(providerType);
     await signInWithCredential(auth, credential);
   };
 
@@ -645,7 +721,7 @@ export default function App() {
         setLoginPassword('');
       } catch (error: any) {
         console.error("Email login failed", error);
-        setLoginError(error.message || "Authentication failed.");
+        setLoginError(friendlyAuthError(error, isSignUp ? 'sign-up' : 'sign-in'));
       } finally {
         setIsLoggingIn(false);
       }
@@ -672,7 +748,7 @@ export default function App() {
       }
     } catch (error: any) {
       console.error(`${providerType} login failed`, error);
-      setLoginError(error.message || `${providerType} sign-in failed.`);
+      setLoginError(friendlyAuthError(error));
     } finally {
       setIsLoggingIn(false);
     }
@@ -762,22 +838,75 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
+  const deletionProvider = useMemo(() => {
+    const providerIds = user?.providerData.map(provider => provider.providerId) || [];
+    if (providerIds.includes('password')) return 'password';
+    if (providerIds.includes('google.com')) return 'google';
+    if (providerIds.includes('apple.com')) return 'apple';
+    return 'unknown';
+  }, [user]);
+
+  const reauthenticateForDeletion = async () => {
+    if (!user) {
+      throw new Error('No signed-in user');
+    }
+
+    if (deletionProvider === 'password') {
+      if (!user.email || !deletePassword) {
+        throw Object.assign(new Error('Password required'), { code: 'auth/invalid-credential' });
+      }
+
+      await reauthenticateWithCredential(
+        user,
+        EmailAuthProvider.credential(user.email, deletePassword)
+      );
+      return;
+    }
+
+    if (deletionProvider === 'google' || deletionProvider === 'apple') {
+      if (Capacitor.isNativePlatform()) {
+        const credential = await getNativeSocialCredential(deletionProvider);
+        await reauthenticateWithCredential(user, credential);
+        return;
+      }
+
+      const provider = deletionProvider === 'google'
+        ? new GoogleAuthProvider()
+        : new OAuthProvider('apple.com');
+
+      if (deletionProvider === 'apple') {
+        provider.addScope('email');
+        provider.addScope('name');
+      }
+
+      await reauthenticateWithPopup(user, provider);
+      return;
+    }
+
+    await user.getIdToken(true);
+  };
+
   const handleDeleteAccount = async () => {
     if (!user) return;
     
     setDeleteError(null);
     setIsDeletingAccount(true);
     try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/delete-account', {
+      await reauthenticateForDeletion();
+      const idToken = await user.getIdToken(true);
+      const response = await fetch(getApiUrl('/api/delete-account'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({ idToken }),
       });
 
-      const result = await response.json();
-      if (result.success) {
+      const result = await response.json().catch(() => ({ success: false }));
+      if (response.ok && result.success) {
         setDeleteSuccess(true);
+        setDeletePassword('');
         setTimeout(async () => {
           await signOut(auth);
           setShowSettingsModal(false);
@@ -789,7 +918,11 @@ export default function App() {
       }
     } catch (error: any) {
       console.error("Delete account failed", error);
-      setDeleteError("Failed to delete account. You may need to re-authenticate first.");
+      setDeleteError(
+        authErrorCode(error)
+          ? friendlyAuthError(error, 'delete')
+          : 'The account could not be deleted right now. Check your connection and try again.'
+      );
     } finally {
       setIsDeletingAccount(false);
     }
@@ -879,7 +1012,7 @@ export default function App() {
     // Fallback to Stripe for Web
     try {
       console.log("App: Falling back to Stripe checkout session...");
-      const response = await fetch('/api/create-checkout-session', {
+      const response = await fetch(getApiUrl('/api/create-checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.uid, email: user.email }),
@@ -891,9 +1024,7 @@ export default function App() {
       // Open Stripe in a new tab to avoid iframe blocking
       if (url) {
         console.log("App: Redirecting to Stripe ->", url);
-        window.open(url, '_blank');
-        // Keep modal open or show a "Check your new tab" message?
-        // Let's close it for now as the user is moving to a new tab
+        await openExternalUrl(url);
         setShowUpgradeModal(false);
       }
     } catch (error) {
@@ -1023,6 +1154,14 @@ export default function App() {
   const handleCalculate = () => {
     setShowResults(true);
   };
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      document.scrollingElement?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [mode, showResults]);
 
   const handleShareResult = async (text: string) => {
     setSharedText(text);
@@ -1283,9 +1422,9 @@ Calculated via BS7671 Field Toolkit
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="grid grid-cols-1 gap-4"
+      className="grid grid-cols-1 sm:grid-cols-2 gap-4"
     >
-      <div className="mb-6 flex justify-between items-start">
+      <div className="sm:col-span-2 mb-4 sm:mb-6 flex justify-between items-start gap-4">
         <div>
           <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">BS7671 Field Toolkit</h2>
           <p className="text-gray-500 text-sm font-medium">Precision electrical engineering suite.</p>
@@ -1302,7 +1441,7 @@ Calculated via BS7671 Field Toolkit
       </div>
 
       {/* Regulatory Status Card */}
-      <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border mb-2">
+      <div className="sm:col-span-2 bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border mb-2">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="text-emerald-500" size={18} />
@@ -1348,7 +1487,7 @@ Calculated via BS7671 Field Toolkit
       </div>
 
       {recentTools.length > 0 && (
-        <div className="mb-2">
+        <div className="sm:col-span-2 mb-2">
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3 ml-1">Recently Used</p>
           <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
             {recentTools.map((t) => (
@@ -1371,11 +1510,11 @@ Calculated via BS7671 Field Toolkit
       )}
 
       {/* Free Tools Section */}
-      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Free Tools</p>
+      <p className="sm:col-span-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Free Tools</p>
 
       <button 
         onClick={() => handleModeChange(AppMode.ZS_CALCULATOR)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+        className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
           <Activity size={28} />
@@ -1389,7 +1528,7 @@ Calculated via BS7671 Field Toolkit
 
       <button 
         onClick={() => handleModeChange(AppMode.VOLTAGE_DROP)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+        className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
           <Waves size={28} />
@@ -1403,7 +1542,7 @@ Calculated via BS7671 Field Toolkit
 
       <button 
         onClick={() => handleModeChange(AppMode.THREE_PHASE)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+        className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
           <Cpu size={28} />
@@ -1417,7 +1556,7 @@ Calculated via BS7671 Field Toolkit
 
       <button 
         onClick={() => handleModeChange(AppMode.CABLE_FINDER)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+        className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
           <Search size={28} />
@@ -1431,7 +1570,7 @@ Calculated via BS7671 Field Toolkit
 
       <button 
         onClick={() => handleModeChange(AppMode.HISTORY)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+        className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
           <HistoryIcon size={28} />
@@ -1444,13 +1583,13 @@ Calculated via BS7671 Field Toolkit
       </button>
 
       {/* Pro Tools Section */}
-      <div className="mt-4 mb-2">
+      <div className="sm:col-span-2 mt-4 mb-2">
         <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-1 ml-1">Pro Features</p>
       </div>
 
       <button 
         onClick={() => handleModeChange(AppMode.SMART_CIRCUIT)}
-        className="bg-hardware-card p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
+        className="sm:col-span-2 bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
       >
         <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform hardware-glow">
           <Cpu size={28} />
@@ -1463,14 +1602,14 @@ Calculated via BS7671 Field Toolkit
           <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Full BS 7671 Design</p>
         </div>
         {!effectiveIsPro && (
-          <div className="absolute top-0 right-0 bg-emerald-500 text-black px-3 py-1 text-[8px] font-black uppercase tracking-tighter rotate-45 translate-x-4 translate-y-2 shadow-lg">
+          <div className="absolute top-3 right-10 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-wider">
             PRO
           </div>
         )}
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-emerald-500 transition-colors" />
       </button>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="sm:col-span-2 grid grid-cols-2 gap-3 sm:gap-4">
         <button 
           onClick={() => handleModeChange(AppMode.FAULT_CURRENT)}
           className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
@@ -1486,7 +1625,7 @@ Calculated via BS7671 Field Toolkit
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">kA Calculator</p>
           </div>
           {!effectiveIsPro && (
-            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+            <div className="absolute top-3 right-3 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider">
               PRO
             </div>
           )}
@@ -1507,7 +1646,7 @@ Calculated via BS7671 Field Toolkit
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">R1 + R2 Calculator</p>
           </div>
           {!effectiveIsPro && (
-            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+            <div className="absolute top-3 right-3 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider">
               PRO
             </div>
           )}
@@ -1528,7 +1667,7 @@ Calculated via BS7671 Field Toolkit
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">Length Limits</p>
           </div>
           {!effectiveIsPro && (
-            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+            <div className="absolute top-3 right-3 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider">
               PRO
             </div>
           )}
@@ -1549,7 +1688,7 @@ Calculated via BS7671 Field Toolkit
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">Earth Resistance</p>
           </div>
           {!effectiveIsPro && (
-            <div className="absolute top-0 right-0 bg-emerald-500 text-black px-2 py-0.5 text-[6px] font-black uppercase tracking-tighter rotate-45 translate-x-3 translate-y-1 shadow-lg">
+            <div className="absolute top-3 right-3 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider">
               PRO
             </div>
           )}
@@ -1560,7 +1699,7 @@ Calculated via BS7671 Field Toolkit
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="p-8 bg-emerald-500 rounded-[40px] text-black relative overflow-hidden group cursor-pointer mt-4"
+          className="sm:col-span-2 p-6 sm:p-8 bg-emerald-500 rounded-[32px] text-black relative overflow-hidden group cursor-pointer mt-4"
           onClick={handleUpgrade}
         >
           <div className="absolute top-0 right-0 p-12 opacity-10 group-hover:scale-110 transition-transform">
@@ -1623,8 +1762,8 @@ Calculated via BS7671 Field Toolkit
     <div className={`min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30`}>
       {/* Header */}
       {!cleanMode && (
-        <header id="main-header" className="bg-[#0a0a0a]/80 backdrop-blur-md border-b border-white/5 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 sticky top-0 z-20">
-          <div className="max-w-md mx-auto flex items-center justify-between">
+        <header id="main-header" className="bg-[#0a0a0a]/80 backdrop-blur-md border-b border-white/5 px-4 sm:px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 sticky top-0 z-20">
+          <div className="max-w-2xl mx-auto flex items-center justify-between">
             <div id="header-logo" className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
               <HeaderLogoMark />
               <h1 className="font-bold text-lg tracking-tight">BS7671 Field Toolkit</h1>
@@ -1674,7 +1813,7 @@ Calculated via BS7671 Field Toolkit
         </button>
       )}
 
-      <main className={`max-w-md mx-auto p-6 ${cleanMode ? 'pb-6' : 'pb-24'}`}>
+      <main className={`${mode === AppMode.HOME ? 'max-w-2xl' : 'max-w-lg'} mx-auto px-4 sm:px-6 pt-5 sm:pt-6 ${cleanMode ? 'pb-6' : 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]'}`}>
         <AnimatePresence mode="wait">
           {mode === AppMode.HOME ? (
             renderHome()
@@ -1823,26 +1962,173 @@ Calculated via BS7671 Field Toolkit
                 <h2 className="text-xl font-bold flex-1">Privacy Policy</h2>
               </div>
               
-              <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border space-y-4 text-sm text-gray-400 leading-relaxed">
-                <p>
-                  Your privacy is important to us. This Privacy Policy explains how BS7671 Field Toolkit collects, uses, and protects your information.
+              <div className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border space-y-5 text-sm text-gray-400 leading-relaxed">
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                  Last updated: 15 June 2026
                 </p>
-                <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">1. Data Collection</h3>
                 <p>
-                  We collect your email address and display name when you create an account to provide cloud sync and Pro features.
+                  This Privacy Policy explains how BS7671 Field Toolkit handles information when you use the app, create an account, save calculations, contact support, or purchase a subscription.
                 </p>
-                <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">2. Data Usage</h3>
-                <p>
-                  Your data is used solely for account management, subscription verification, and saving your calculation history.
-                </p>
-                <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">3. Third Parties</h3>
-                <p>
-                  We use Firebase for authentication and database services, and Stripe for payment processing. We do not sell your data to third parties.
-                </p>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">1. Information We Process</h3>
+                  <p>
+                    Account information may include your email address, display name, profile image, authentication provider and Firebase user identifier. Calculations may be stored locally on your device and, when signed in, in your private account history.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">2. How Information Is Used</h3>
+                  <p>
+                    Information is used to authenticate you, provide account and history features, restore Pro access, respond to support requests, maintain security, and operate and improve the toolkit.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">3. Purchases</h3>
+                  <p>
+                    Native subscriptions are processed by Apple App Store or Google Play. Web payments may be processed by Stripe. We do not receive or store your full payment card details. Store transaction identifiers and entitlement status may be used to provide Pro access.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">4. Service Providers</h3>
+                  <p>
+                    The app uses Firebase for authentication and cloud data, Apple and Google for platform services and purchases, Stripe for supported web payments, and a hosted update service for checking published BS 7671 amendment information.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">5. Retention and Deletion</h3>
+                  <p>
+                    Account information and cloud calculation history are retained while your account remains active. You can permanently delete your account and associated cloud history from Settings. Local history remains on a device until removed in the app or the app data is cleared.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">6. Security and Your Rights</h3>
+                  <p>
+                    Reasonable technical safeguards are used, but no online service can guarantee absolute security. Depending on your location, you may request access, correction or deletion of personal information by contacting support.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">7. Children and Changes</h3>
+                  <p>
+                    The toolkit is intended for electrical professionals, trainees and adult users, and is not directed to children under 13. Material policy changes will be reflected by updating this page and its effective date.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">8. Contact</h3>
+                  <p>
+                    Privacy and data requests can be sent to <a href={SUPPORT_EMAIL} className="text-emerald-500 underline">tommyholm@hotmail.co.uk</a>.
+                  </p>
+                </section>
+
                 <div className="pt-4 border-t border-white/5">
-                  <a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer" className="text-emerald-500 font-bold uppercase text-[10px] tracking-widest hover:underline">
-                    View Full Policy External
-                  </a>
+                  <button
+                    onClick={() => void openExternalUrl(PRIVACY_POLICY_URL)}
+                    className="text-emerald-500 font-bold uppercase text-[10px] tracking-widest hover:underline"
+                  >
+                    Open Policy in Browser
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ) : mode === AppMode.TERMS ? (
+            <motion.div
+              key={mode}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="text-xl font-bold flex-1">Terms of Service</h2>
+              </div>
+
+              <div className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border space-y-5 text-sm text-gray-400 leading-relaxed">
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                  Last updated: 15 June 2026
+                </p>
+                <p>
+                  By using BS7671 Field Toolkit, you agree to these terms. If you do not agree, do not use the app.
+                </p>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">1. Engineering Guidance</h3>
+                  <p>
+                    The toolkit provides calculation assistance and general guidance. It does not replace BS 7671, manufacturer instructions, site inspection, professional judgement or verification by a suitably qualified person. You remain responsible for every design and installation decision.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">2. Accounts</h3>
+                  <p>
+                    You are responsible for maintaining the security of your sign-in credentials and for activity performed through your account. Information supplied when creating an account must be accurate and lawful.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">3. Subscriptions</h3>
+                  <p>
+                    Pro subscriptions, free trials, renewals, cancellations and refunds are administered by the store or payment provider used for purchase. Subscriptions renew automatically unless cancelled through the relevant account settings before renewal. Prices and trial availability are displayed before purchase.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">4. Acceptable Use</h3>
+                  <p>
+                    You must not misuse the service, attempt unauthorised access, interfere with its operation, reverse engineer protected services, submit unlawful content, or use the toolkit in a way that risks harm to people or property.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">5. Intellectual Property</h3>
+                  <p>
+                    The app, its interface, original content and software are protected by applicable intellectual property law. References to BS 7671, IET, BSI, Apple, Google and other third parties remain the property of their respective owners.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">6. Availability and Updates</h3>
+                  <p>
+                    Features may change as standards, platforms and services evolve. We aim to keep the app available and current but do not guarantee uninterrupted operation or that external regulatory information will always be immediately available.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">7. Liability</h3>
+                  <p>
+                    To the extent permitted by law, the app is provided without guarantees beyond those that cannot legally be excluded. We are not responsible for losses arising from reliance on unverified calculations, incorrect inputs, site conditions or use contrary to professional requirements.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">8. Termination and Changes</h3>
+                  <p>
+                    Access may be restricted for serious misuse. You may stop using the service or delete your account at any time. Updated terms take effect when published in the app with a revised date.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">9. Contact</h3>
+                  <p>
+                    Questions about these terms can be sent to <a href={SUPPORT_EMAIL} className="text-emerald-500 underline">tommyholm@hotmail.co.uk</a>.
+                  </p>
+                </section>
+
+                <div className="pt-4 border-t border-white/5">
+                  <button
+                    onClick={() => void openExternalUrl(TERMS_OF_SERVICE_URL)}
+                    className="text-emerald-500 font-bold uppercase text-[10px] tracking-widest hover:underline"
+                  >
+                    Open Terms in Browser
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -1891,7 +2177,7 @@ Calculated via BS7671 Field Toolkit
                 ) : (
                   <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
                     <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Manual Request</p>
-                    <p className="text-sm text-white">Please email <a href={SUPPORT_URL} className="text-emerald-500 underline">tommyholm@hotmail.co.uk</a> with your account email to request manual deletion.</p>
+                    <p className="text-sm text-white">Please email <a href={SUPPORT_EMAIL} className="text-emerald-500 underline">tommyholm@hotmail.co.uk</a> with your account email to request manual deletion.</p>
                   </div>
                 )}
               </div>
@@ -1959,11 +2245,8 @@ Calculated via BS7671 Field Toolkit
                     <ArrowLeft size={20} />
                   </button>
                   <h2 className="text-xl font-bold flex-1">
-                    {mode === AppMode.SMART_CIRCUIT && 'Smart Circuit'}
                     {mode === AppMode.VOLTAGE_DROP && 'Voltage Drop'}
-                    {mode === AppMode.THREE_PHASE && 'Power Calculator'}
                     {mode === AppMode.CABLE_FINDER && 'Cable Size Finder'}
-                    {mode === AppMode.ZS_CALCULATOR && 'Zs Calculator'}
                   </h2>
                   {!showResults && (
                     <button 
@@ -1983,28 +2266,7 @@ Calculated via BS7671 Field Toolkit
                 <div className="space-y-6">
                   {/* Inputs based on mode */}
                   <div className="grid gap-4">
-                    {mode === AppMode.THREE_PHASE && (
-                      <div className="bg-hardware-card p-5 rounded-3xl border border-hardware-border">
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-3 tracking-widest">Supply Type</label>
-                        <div className="grid grid-cols-2 gap-2">
-                          {Object.values(SupplyType).map((t) => (
-                            <button
-                              key={t}
-                              onClick={() => setSupplyType(t)}
-                              className={`py-3 px-4 rounded-2xl text-[10px] font-bold transition-all border ${
-                                supplyType === t 
-                                  ? 'bg-orange-500 text-white border-orange-400 shadow-lg shadow-orange-500/20' 
-                                  : 'bg-hardware-card text-gray-400 border-hardware-border hover:border-white/20'
-                              }`}
-                            >
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {(mode === AppMode.SMART_CIRCUIT || mode === AppMode.VOLTAGE_DROP || mode === AppMode.THREE_PHASE) && (
+                    {mode === AppMode.VOLTAGE_DROP && (
                       <div className="bg-hardware-card p-5 rounded-3xl border border-hardware-border">
                         <label className="block text-[10px] font-bold text-gray-500 uppercase mb-3 tracking-widest">Load (kW)</label>
                         <div className="flex items-center gap-4">
@@ -2023,7 +2285,7 @@ Calculated via BS7671 Field Toolkit
                       </div>
                     )}
 
-                    {(mode === AppMode.SMART_CIRCUIT || mode === AppMode.VOLTAGE_DROP) && (
+                    {mode === AppMode.VOLTAGE_DROP && (
                       <div className="bg-hardware-card p-5 rounded-3xl border border-hardware-border">
                         <label className="block text-[10px] font-bold text-gray-500 uppercase mb-3 tracking-widest">Length (m)</label>
                         <div className="flex items-center gap-4">
@@ -2062,132 +2324,94 @@ Calculated via BS7671 Field Toolkit
                   </div>
 
                   {/* Config based on mode */}
-                  {(mode === AppMode.SMART_CIRCUIT || mode === AppMode.VOLTAGE_DROP) && (
+                  {(mode === AppMode.VOLTAGE_DROP || mode === AppMode.CABLE_FINDER) && (
                     <div className="space-y-4">
-                      <div>
-                        <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Circuit Type</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          {Object.values(CircuitType).map((type) => (
-                            <button
-                              key={type}
-                              onClick={() => setCircuitType(type)}
-                              className={`py-4 px-4 rounded-2xl text-xs font-bold transition-all border ${
-                                circuitType === type 
-                                  ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
-                                  : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
-                              }`}
-                            >
-                              {type.split(' (')[0]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      {mode === AppMode.VOLTAGE_DROP && (
+                        <>
+                          <div>
+                            <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Circuit Type</span>
+                            <div className="grid grid-cols-2 gap-2">
+                              {Object.values(CircuitType).map((type) => (
+                                <button
+                                  key={type}
+                                  onClick={() => setCircuitType(type)}
+                                  className={`py-4 px-4 rounded-2xl text-xs font-bold transition-all border ${
+                                    circuitType === type
+                                      ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20'
+                                      : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
+                                  }`}
+                                >
+                                  {type.split(' (')[0]}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
 
-                      <div>
-                        <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Supply Type</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          {Object.values(SupplyType).map((type) => (
-                            <button
-                              key={type}
-                              onClick={() => setSupplyType(type)}
-                              className={`py-4 px-4 rounded-2xl text-xs font-bold transition-all border ${
-                                supplyType === type 
-                                  ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
-                                  : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
-                              }`}
-                            >
-                              {type.split(' (')[0]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                          <div>
+                            <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Supply Type</span>
+                            <div className="grid grid-cols-2 gap-2">
+                              {Object.values(SupplyType).map((type) => (
+                                <button
+                                  key={type}
+                                  onClick={() => setSupplyType(type)}
+                                  className={`py-4 px-4 rounded-2xl text-xs font-bold transition-all border ${
+                                    supplyType === type
+                                      ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20'
+                                      : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
+                                  }`}
+                                >
+                                  {type.split(' (')[0]}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
 
                       {/* Cable Core Type */}
-                      {(mode === AppMode.SMART_CIRCUIT || mode === AppMode.CABLE_FINDER || mode === AppMode.VOLTAGE_DROP) && (
-                        <div className="space-y-6">
-                          <div>
-                            <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Cable Core Type</span>
-                            <div className="grid grid-cols-2 gap-2">
-                              {Object.values(CableCoreType).map((type) => (
-                                <button
-                                  key={type}
-                                  onClick={() => setCableCoreType(type)}
-                                  className={`py-4 px-4 rounded-2xl text-xs font-bold transition-all border ${
-                                    cableCoreType === type 
-                                      ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
-                                      : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
-                                  }`}
-                                >
-                                  {type}
-                                </button>
-                              ))}
-                            </div>
+                      <div className="space-y-6">
+                        <div>
+                          <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Cable Core Type</span>
+                          <div className="grid grid-cols-2 gap-2">
+                            {Object.values(CableCoreType).map((type) => (
+                              <button
+                                key={type}
+                                onClick={() => setCableCoreType(type)}
+                                className={`py-4 px-4 rounded-2xl text-xs font-bold transition-all border ${
+                                  cableCoreType === type
+                                    ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20'
+                                    : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
+                                }`}
+                              >
+                                {type}
+                              </button>
+                            ))}
                           </div>
-
-                          <div>
-                            <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Cable Type (BS 7671)</span>
-                            <div className="grid grid-cols-1 gap-2">
-                              {Object.values(CableType).map((type) => (
-                                <button
-                                  key={type}
-                                  onClick={() => setCableType(type)}
-                                  className={`py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border ${
-                                    cableType === type 
-                                      ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
-                                      : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
-                                  }`}
-                                >
-                                  {type}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          {mode === AppMode.SMART_CIRCUIT && (
-                            <div className="space-y-6 pt-4 border-t border-white/5">
-                              <div>
-                                <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">External Impedance (Ze) Ω</span>
-                                <div className="bg-hardware-card p-5 rounded-3xl border border-hardware-border">
-                                  <div className="flex items-center gap-4">
-                                    <Activity size={24} className="text-orange-500" />
-                                    <input
-                                      type="number"
-                                      inputMode="decimal"
-                                      value={ze}
-                                      onChange={(e) => setZe(e.target.value)}
-                                      placeholder="0.35"
-                                      className="bg-transparent w-full text-3xl font-mono font-bold focus:outline-none placeholder:text-gray-800"
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div>
-                                <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Protection Device Type</span>
-                                <div className="grid grid-cols-1 gap-2">
-                                  {Object.values(DeviceType).map((type) => (
-                                    <button
-                                      key={type}
-                                      onClick={() => setDeviceType(type)}
-                                      className={`py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border ${
-                                        deviceType === type 
-                                          ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
-                                          : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
-                                      }`}
-                                    >
-                                      {type}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          )}
                         </div>
-                      )}
+
+                        <div>
+                          <span className="block text-[10px] font-bold text-gray-500 uppercase mb-3 ml-1 tracking-widest">Cable Type (BS 7671)</span>
+                          <div className="grid grid-cols-1 gap-2">
+                            {Object.values(CableType).map((type) => (
+                              <button
+                                key={type}
+                                onClick={() => setCableType(type)}
+                                className={`py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border ${
+                                  cableType === type
+                                    ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20'
+                                    : 'bg-[#1a1a1a] text-gray-400 border-white/5 hover:border-white/20'
+                                }`}
+                              >
+                                {type}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
-                  {(mode === AppMode.SMART_CIRCUIT || mode === AppMode.CABLE_FINDER || mode === AppMode.VOLTAGE_DROP) && (
+                  {(mode === AppMode.CABLE_FINDER || mode === AppMode.VOLTAGE_DROP) && (
                     <div>
                       <div className="flex items-center justify-between mb-3 ml-1">
                         <span className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest">Installation Method</span>
@@ -2228,22 +2452,8 @@ Calculated via BS7671 Field Toolkit
               ) : (
                 <div className="space-y-6">
                   {/* Results Display */}
-                  {mode === AppMode.THREE_PHASE && threePhaseResult && (
-                    <div className="bg-hardware-card p-8 rounded-[40px] border border-hardware-border text-center relative overflow-hidden">
-                      <div className="dashed-ring absolute inset-0 pointer-events-none opacity-50" />
-                      <span className="block text-[10px] font-bold text-gray-500 uppercase mb-4 tracking-widest relative z-10">Calculated Current</span>
-                      <div className="flex items-baseline justify-center gap-2 relative z-10">
-                        <span className="text-7xl font-mono font-bold tracking-tighter">{threePhaseResult.toFixed(1)}</span>
-                        <span className="text-2xl font-bold text-orange-500">A</span>
-                      </div>
-                      <p className="mt-6 text-[10px] font-bold uppercase tracking-widest text-gray-500 leading-relaxed relative z-10">
-                        {loadKw}kW @ {supplyType === SupplyType.THREE_PHASE ? '400V' : '230V'} • PF 0.9
-                      </p>
-                    </div>
-                  )}
-
                   {mode === AppMode.CABLE_FINDER && cableFinderResult && (
-                    <div className="bg-hardware-card p-8 rounded-[40px] border border-hardware-border text-center relative overflow-hidden">
+                    <div className="bg-hardware-card p-6 sm:p-8 rounded-[32px] border border-hardware-border text-center relative overflow-hidden">
                       <div className="dashed-ring absolute inset-0 pointer-events-none opacity-50" />
                       <span className="block text-[10px] font-bold text-gray-500 uppercase mb-4 tracking-widest relative z-10">Recommended Size</span>
                       <div className="flex items-baseline justify-center gap-2 relative z-10">
@@ -2263,7 +2473,7 @@ Calculated via BS7671 Field Toolkit
                     </div>
                   )}
 
-                  {(mode === AppMode.SMART_CIRCUIT || mode === AppMode.VOLTAGE_DROP) && result && (
+                  {mode === AppMode.VOLTAGE_DROP && result && (
                     <div className="space-y-4">
                       {/* Share Button */}
                       <div className="flex justify-end">
@@ -2277,7 +2487,7 @@ Calculated via BS7671 Field Toolkit
                       </div>
 
                       {/* Compliance Banner */}
-                      <div className={`p-6 rounded-[32px] flex items-center gap-4 border ${result.isCompliant ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+                      <div className={`p-4 sm:p-6 rounded-[28px] flex items-center gap-4 border ${result.isCompliant ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
                         <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${result.isCompliant ? 'bg-emerald-500' : 'bg-red-500'} text-white shadow-lg hardware-glow`}>
                           {result.isCompliant ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
                         </div>
@@ -2291,31 +2501,11 @@ Calculated via BS7671 Field Toolkit
                         </div>
                       </div>
 
-                      {mode === AppMode.SMART_CIRCUIT && (
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="bg-hardware-card p-6 rounded-[32px] border border-hardware-border">
-                            <span className="block text-[10px] font-bold text-gray-500 uppercase mb-2 tracking-widest">Current</span>
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-3xl font-mono font-bold">{result.loadCurrent.toFixed(1)}</span>
-                              <span className="text-xs font-bold text-emerald-500">A</span>
-                            </div>
-                          </div>
-                          <div className="bg-hardware-card p-6 rounded-[32px] border border-hardware-border">
-                            <span className="block text-[10px] font-bold text-gray-500 uppercase mb-2 tracking-widest">Device</span>
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-3xl font-mono font-bold">{result.protectiveDevice}</span>
-                              <span className="text-xs font-bold text-emerald-500">A</span>
-                              <span className="block text-[8px] text-gray-500 uppercase font-bold tracking-widest mt-1">{deviceType}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="bg-emerald-500 p-8 rounded-[40px] text-white shadow-xl shadow-emerald-500/20 relative overflow-hidden hardware-glow">
+                      <div className="bg-emerald-500 p-6 sm:p-8 rounded-[32px] text-white shadow-xl shadow-emerald-500/20 relative overflow-hidden hardware-glow">
                         <div className="relative z-10">
                           <span className="block text-[10px] font-bold text-white/50 uppercase mb-2 tracking-widest">Cable Size</span>
                           <div className="flex items-baseline gap-2">
-                            <span className="text-6xl font-mono font-bold tracking-tighter">{result.cableSize}</span>
+                            <span className="text-5xl sm:text-6xl font-mono font-bold tracking-tighter">{result.cableSize}</span>
                             <span className="text-xl font-bold opacity-50">mm²</span>
                           </div>
                         </div>
@@ -2324,11 +2514,11 @@ Calculated via BS7671 Field Toolkit
 
                       <div className="bg-hardware-card rounded-[32px] border border-hardware-border overflow-hidden">
                         <div className="p-6 space-y-4">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Voltage Drop</span>
-                            <div className="text-right">
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-gray-400">Voltage Drop</span>
+                            <div className="result-field min-w-0 text-right">
                               <span className="font-mono font-bold text-xl">{result.voltageDrop.toFixed(2)}V</span>
-                              <span className={`ml-2 text-[10px] font-bold px-2 py-1 rounded-lg ${result.isCompliant ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                              <span className={`inline-block ml-2 mt-1 text-[10px] font-bold px-2 py-1 rounded-lg ${result.isCompliant ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
                                 {result.voltageDropPercentage.toFixed(1)}%
                               </span>
                             </div>
@@ -2350,11 +2540,11 @@ Calculated via BS7671 Field Toolkit
                       {result.zs !== undefined && (
                         <div className="bg-hardware-card rounded-[32px] border border-hardware-border overflow-hidden">
                           <div className="p-6 space-y-4">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Earth Loop (Zs)</span>
-                              <div className="text-right">
+                            <div className="flex items-start justify-between gap-3">
+                              <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-gray-400">Earth Loop (Zs)</span>
+                              <div className="result-field min-w-0 text-right">
                                 <span className="font-mono font-bold text-xl">{result.zs.toFixed(2)}Ω</span>
-                                <span className={`ml-2 text-[10px] font-bold px-2 py-1 rounded-lg ${result.zsCompliant ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                                <span className={`inline-block ml-2 mt-1 text-[10px] font-bold px-2 py-1 rounded-lg ${result.zsCompliant ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
                                   Max: {result.maxZs?.toFixed(2)}Ω
                                 </span>
                               </div>
@@ -2420,7 +2610,7 @@ Calculated via BS7671 Field Toolkit
       {/* Navigation Bar (Mobile Style) */}
       {!cleanMode && (
         <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a]/80 backdrop-blur-xl border-t border-white/5 px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] z-20">
-          <div className="max-w-md mx-auto flex justify-around items-center">
+          <div className="max-w-xl mx-auto flex justify-around items-center">
             <button onClick={goHome} className={`flex flex-col items-center gap-1 ${mode === AppMode.HOME ? 'text-emerald-500' : 'text-gray-500'}`}>
               <LayoutGrid size={20} />
               <span className="text-[10px] font-bold uppercase">Home</span>
@@ -2443,21 +2633,13 @@ Calculated via BS7671 Field Toolkit
 
       <AnimatePresence>
         {showTextShareMenu && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowTextShareMenu(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[40px] sm:rounded-[40px] p-8"
-            >
-              <div className="flex items-center justify-between mb-8">
+          <ModalSheet
+            onClose={() => setShowTextShareMenu(false)}
+            ariaLabel="Export calculation"
+            zIndexClass="z-50"
+            panelClassName="p-5 sm:p-6"
+          >
+              <div className="flex items-center justify-between mb-5 sm:mb-6">
                 <h3 className="text-xl font-bold">Export Calculation</h3>
                 <button onClick={() => setShowTextShareMenu(false)} className="p-2 bg-white/5 rounded-full">
                   <X size={20} />
@@ -2501,42 +2683,34 @@ Calculated via BS7671 Field Toolkit
                 </button>
               </div>
 
-              <div className="mt-8 pt-8 border-t border-white/5">
+              <div className="mt-5 pt-5 border-t border-white/5">
                 <p className="text-[10px] text-gray-500 text-center uppercase font-bold tracking-widest mb-4">Preview</p>
                 <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-2xl bg-black/30 border border-white/5 p-4 text-[10px] leading-relaxed text-gray-300 font-mono">
                   {sharedText}
                 </pre>
               </div>
-            </motion.div>
-          </div>
+          </ModalSheet>
         )}
 
         {showShareMenu && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowShareMenu(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[40px] sm:rounded-[40px] p-8"
-            >
-              <div className="flex items-center justify-between mb-8">
+          <ModalSheet
+            onClose={() => setShowShareMenu(false)}
+            ariaLabel="Export summary"
+            maxWidthClass="max-w-lg"
+            zIndexClass="z-50"
+            panelClassName="p-5 sm:p-6"
+          >
+              <div className="flex items-center justify-between mb-5 sm:mb-6">
                 <h3 className="text-xl font-bold">Export Summary</h3>
                 <button onClick={() => setShowShareMenu(false)} className="p-2 bg-white/5 rounded-full">
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 <button 
                   onClick={handleShareText}
-                  className="flex flex-col items-center gap-3 p-6 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group"
+                  className="flex flex-col items-center gap-2 p-3 sm:p-4 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-colors group"
                 >
                   <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
                     {isCopying ? <Check size={24} /> : <Copy size={24} />}
@@ -2549,7 +2723,7 @@ Calculated via BS7671 Field Toolkit
                 <button 
                   onClick={handleDownloadImage}
                   disabled={isSavingImage}
-                  className="flex flex-col items-center gap-3 p-6 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
+                  className="flex flex-col items-center gap-2 p-3 sm:p-4 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
                 >
                   <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
                     {isSavingImage ? <Check size={24} /> : <Download size={24} />}
@@ -2562,7 +2736,7 @@ Calculated via BS7671 Field Toolkit
                 <button 
                   onClick={handleDownloadPDF}
                   disabled={isSavingPDF}
-                  className="flex flex-col items-center gap-3 p-6 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
+                  className="flex flex-col items-center gap-2 p-3 sm:p-4 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
                 >
                   <div className="w-12 h-12 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
                     {isSavingPDF ? <Check size={24} /> : <FileText size={24} />}
@@ -2573,11 +2747,11 @@ Calculated via BS7671 Field Toolkit
                 </button>
               </div>
 
-              <div className="mt-8 pt-8 border-t border-white/5">
+              <div className="mt-5 pt-5 border-t border-white/5">
                 <p className="text-[10px] text-gray-500 text-center uppercase font-bold tracking-widest">Preview</p>
-                <div className="mt-4 p-4 bg-hardware-bg rounded-2xl border border-hardware-border overflow-hidden">
-                  <div ref={shareRef} className="p-6 bg-hardware-bg text-white font-sans">
-                    <div className="flex items-center gap-3 mb-6 border-b border-white/10 pb-4">
+                <div className="mt-3 p-2 bg-hardware-bg rounded-2xl border border-hardware-border">
+                  <div ref={shareRef} className="p-4 bg-hardware-bg text-white font-sans">
+                    <div className="flex items-center gap-3 mb-4 border-b border-white/10 pb-3">
                       <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center text-white">
                         <Cpu size={20} />
                       </div>
@@ -2587,40 +2761,40 @@ Calculated via BS7671 Field Toolkit
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-y-4 gap-x-8">
-                      <div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Load</span>
                         <span className="text-sm font-mono font-bold">{loadKw} kW</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Length</span>
                         <span className="text-sm font-mono font-bold">{lengthM} m</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Cable Type</span>
-                        <span className="text-sm font-mono font-bold uppercase truncate block">{cableType}</span>
+                        <span className="result-field-value text-xs sm:text-sm font-mono font-bold uppercase block">{cableType}</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Core Type</span>
-                        <span className="text-sm font-mono font-bold uppercase">{cableCoreType}</span>
+                        <span className="result-field-value text-xs sm:text-sm font-mono font-bold uppercase">{cableCoreType}</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Cable Size</span>
                         <span className="text-sm font-mono font-bold text-emerald-500">{result?.cableSize} mm²</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Device</span>
-                        <span className="text-sm font-mono font-bold">{result?.protectiveDevice} A ({deviceType})</span>
+                        <span className="result-field-value text-xs sm:text-sm font-mono font-bold">{result?.protectiveDevice} A ({deviceType})</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">V-Drop</span>
-                        <span className="text-sm font-mono font-bold">{result?.voltageDrop.toFixed(2)}V ({result?.voltageDropPercentage.toFixed(1)}%)</span>
+                        <span className="result-field-value text-xs sm:text-sm font-mono font-bold">{result?.voltageDrop.toFixed(2)}V ({result?.voltageDropPercentage.toFixed(1)}%)</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Zs Value</span>
                         <span className="text-sm font-mono font-bold">{result?.zs?.toFixed(2)} Ω</span>
                       </div>
-                      <div>
+                      <div className="result-field">
                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">Status</span>
                         <span className={`text-[10px] font-bold uppercase tracking-widest ${result?.isCompliant ? 'text-emerald-500' : 'text-red-500'}`}>
                           {result?.isCompliant ? 'Compliant' : 'Non-Compliant'}
@@ -2719,14 +2893,13 @@ Calculated via BS7671 Field Toolkit
                   </div>
                 </div>
               </div>
-            </motion.div>
-          </div>
+          </ModalSheet>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {showMethodInfo && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="safe-modal-shell fixed inset-0 z-50 flex items-end sm:items-center justify-center">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2738,7 +2911,7 @@ Calculated via BS7671 Field Toolkit
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[40px] sm:rounded-[40px] p-8 max-h-[80vh] overflow-y-auto custom-scrollbar"
+              className="safe-modal-panel relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[32px] sm:rounded-[32px] p-5 sm:p-7 overflow-y-auto custom-scrollbar"
             >
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-xl font-bold">Installation Methods</h3>
@@ -2783,7 +2956,7 @@ Calculated via BS7671 Field Toolkit
         )}
 
         {showSettingsModal && (
-          <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4">
+          <div className="safe-modal-shell fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2795,7 +2968,7 @@ Calculated via BS7671 Field Toolkit
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-hardware-card border border-white/10 rounded-t-[40px] sm:rounded-[40px] p-8 overflow-hidden"
+              className="safe-modal-panel relative w-full max-w-md bg-hardware-card border border-white/10 rounded-t-[32px] sm:rounded-[32px] p-5 sm:p-7 overflow-y-auto"
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-2xl font-bold">Settings</h3>
@@ -2804,7 +2977,7 @@ Calculated via BS7671 Field Toolkit
                 </button>
               </div>
 
-              <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+              <div className="space-y-6">
                 {user && (
                   <div className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-white/5">
                     {user.photoURL ? (
@@ -2858,7 +3031,7 @@ Calculated via BS7671 Field Toolkit
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
                   <button 
-                    onClick={() => window.open(PRIVACY_POLICY_URL, '_blank')}
+                    onClick={() => void openExternalUrl(PRIVACY_POLICY_URL)}
                     className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
                   >
                     <span className="text-sm font-medium">Privacy Policy (External)</span>
@@ -2875,14 +3048,20 @@ Calculated via BS7671 Field Toolkit
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
                   <button 
-                    onClick={() => window.open(TERMS_OF_SERVICE_URL, '_blank')}
+                    onClick={() => {
+                      setMode(AppMode.TERMS);
+                      setShowSettingsModal(false);
+                    }}
                     className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
                   >
                     <span className="text-sm font-medium">Terms of Service</span>
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
                   <button 
-                    onClick={() => window.open(SUPPORT_URL, '_blank')}
+                    onClick={() => {
+                      setMode(AppMode.SUPPORT);
+                      setShowSettingsModal(false);
+                    }}
                     className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
                   >
                     <span className="text-sm font-medium">Support & Contact</span>
@@ -2907,7 +3086,11 @@ Calculated via BS7671 Field Toolkit
                   {!showDeleteConfirm ? (
                     <button 
                       id="delete-account-trigger"
-                      onClick={() => setShowDeleteConfirm(true)}
+                      onClick={() => {
+                        setDeletePassword('');
+                        setDeleteError(null);
+                        setShowDeleteConfirm(true);
+                      }}
                       className="w-full p-4 bg-red-500/10 hover:bg-red-500/20 rounded-2xl text-left flex items-center gap-3 text-red-500 transition-colors"
                     >
                       <AlertTriangle size={18} />
@@ -2916,8 +3099,31 @@ Calculated via BS7671 Field Toolkit
                   ) : (
                     <div id="delete-confirmation-ui" className="p-4 bg-red-500/10 rounded-2xl border border-red-500/20 space-y-4">
                       <p className="text-xs text-red-500 font-bold leading-relaxed">
-                        Are you sure? This action is permanent and will delete all your calculation history.
+                        This permanently deletes your account and cloud calculation history. Verify your identity to continue.
                       </p>
+                      {deletionProvider === 'password' ? (
+                        <div>
+                          <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2 block">
+                            Confirm Password
+                          </label>
+                          <input
+                            type="password"
+                            value={deletePassword}
+                            onChange={event => setDeletePassword(event.target.value)}
+                            autoComplete="current-password"
+                            placeholder="Enter your password"
+                            className="w-full bg-black/40 border border-red-500/20 rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-red-500/50"
+                          />
+                        </div>
+                      ) : deletionProvider === 'google' || deletionProvider === 'apple' ? (
+                        <p className="text-[10px] text-gray-400 leading-relaxed">
+                          You will be asked to sign in with {deletionProvider === 'google' ? 'Google' : 'Apple'} again before deletion.
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-gray-400 leading-relaxed">
+                          Your current session will be verified before deletion.
+                        </p>
+                      )}
                       {deleteError && (
                         <p className="text-[10px] text-red-400 bg-red-400/10 p-2 rounded-lg border border-red-400/20">
                           {deleteError}
@@ -2932,15 +3138,16 @@ Calculated via BS7671 Field Toolkit
                         <button 
                           id="confirm-delete-button"
                           onClick={handleDeleteAccount}
-                          disabled={isDeletingAccount || deleteSuccess}
+                          disabled={isDeletingAccount || deleteSuccess || (deletionProvider === 'password' && !deletePassword)}
                           className="flex-1 py-2 bg-red-500 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
                         >
-                          {isDeletingAccount ? "Deleting..." : "Yes, Delete"}
+                          {isDeletingAccount ? "Verifying..." : "Verify & Delete"}
                         </button>
                         <button 
                           id="cancel-delete-button"
                           onClick={() => {
                             setShowDeleteConfirm(false);
+                            setDeletePassword('');
                             setDeleteError(null);
                           }}
                           disabled={isDeletingAccount || deleteSuccess}
@@ -2958,34 +3165,25 @@ Calculated via BS7671 Field Toolkit
         )}
 
         {showUpgradeModal && (
-          <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowUpgradeModal(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-md"
-            />
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-hardware-card border border-emerald-500/30 rounded-t-[40px] sm:rounded-[40px] p-8 overflow-hidden"
-            >
+          <ModalSheet
+            onClose={() => setShowUpgradeModal(false)}
+            ariaLabel="Upgrade to Pro"
+            panelClassName="border-emerald-500/30 p-5 sm:p-7"
+          >
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent" />
               
-              <div className="flex justify-center mb-6">
-                <div className="w-20 h-20 bg-emerald-500/10 rounded-3xl flex items-center justify-center text-emerald-500 hardware-glow">
-                  <Crown size={40} />
+              <div className="flex justify-center mb-4 sm:mb-6">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-500/10 rounded-2xl sm:rounded-3xl flex items-center justify-center text-emerald-500 hardware-glow">
+                  <Crown size={36} />
                 </div>
               </div>
 
-              <div className="text-center mb-8">
+              <div className="text-center mb-5 sm:mb-7">
                 <h3 className="text-2xl font-bold mb-2">Unlock Pro Tools</h3>
                 <p className="text-gray-400 text-sm">Get the full BS 7671 design suite and advanced features.</p>
               </div>
 
-              <div className="space-y-4 mb-8">
+              <div className="space-y-3 mb-5 sm:mb-7">
                 <div className="flex items-center gap-3 p-4 bg-white/5 rounded-2xl border border-white/5">
                   <div className="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center text-emerald-500">
                     <CheckCircle2 size={18} />
@@ -3018,7 +3216,7 @@ Calculated via BS7671 Field Toolkit
               <button 
                 onClick={handleUpgrade}
                 disabled={isUpgrading}
-                className="w-full bg-emerald-500 text-black py-5 rounded-3xl font-black uppercase tracking-widest hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full min-h-14 bg-emerald-500 text-black px-4 py-4 rounded-2xl font-black uppercase tracking-wider text-[11px] sm:text-xs leading-tight text-center hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {isUpgrading ? (
                   <>
@@ -3040,14 +3238,20 @@ Calculated via BS7671 Field Toolkit
 
                 <div className="flex items-center gap-4">
                   <button 
-                    onClick={() => window.open(PRIVACY_POLICY_URL, '_blank')}
+                    onClick={() => {
+                      setShowUpgradeModal(false);
+                      setMode(AppMode.PRIVACY);
+                    }}
                     className="text-[8px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors"
                   >
                     Privacy Policy
                   </button>
                   <div className="w-1 h-1 bg-white/10 rounded-full" />
                   <button 
-                    onClick={() => window.open(TERMS_OF_SERVICE_URL, '_blank')}
+                    onClick={() => {
+                      setShowUpgradeModal(false);
+                      setMode(AppMode.TERMS);
+                    }}
                     className="text-[8px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors"
                   >
                     Terms of Use
@@ -3067,12 +3271,11 @@ Calculated via BS7671 Field Toolkit
                   Maybe Later
                 </button>
               </div>
-            </motion.div>
-          </div>
+          </ModalSheet>
         )}
 
         {showLoginModal && (
-          <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-4">
+          <div className="safe-modal-shell fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -3084,7 +3287,7 @@ Calculated via BS7671 Field Toolkit
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[40px] sm:rounded-[40px] p-8 overflow-hidden"
+              className="safe-modal-panel relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[32px] sm:rounded-[32px] p-5 sm:p-7 overflow-y-auto"
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-xl font-bold uppercase tracking-tight">Sign In</h3>

@@ -29,6 +29,7 @@
     @apply bg-hardware-bg text-white font-sans antialiased;
     min-height: 100vh;
     min-height: -webkit-fill-available;
+    overflow-x: hidden;
     /* Hide scrollbar for Chrome, Safari and Opera */
     &::-webkit-scrollbar {
       display: none;
@@ -59,4 +60,49 @@
 }
 .custom-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+.safe-modal-shell {
+  padding: max(0.75rem, env(safe-area-inset-top))
+    max(0.75rem, env(safe-area-inset-right))
+    max(0.75rem, env(safe-area-inset-bottom))
+    max(0.75rem, env(safe-area-inset-left));
+}
+
+.safe-modal-panel {
+  max-height: calc(
+    100dvh - max(0.75rem, env(safe-area-inset-top)) -
+      max(0.75rem, env(safe-area-inset-bottom))
+  );
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.safe-modal-panel::-webkit-scrollbar {
+  display: none;
+}
+
+.result-field {
+  min-width: 0;
+}
+
+.result-field-value {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .safe-modal-shell {
+    align-items: center;
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  .safe-modal-panel {
+    max-height: calc(
+      100dvh - max(0.5rem, env(safe-area-inset-top)) -
+        max(0.5rem, env(safe-area-inset-bottom))
+    );
+    border-radius: 1.5rem;
+  }
 }

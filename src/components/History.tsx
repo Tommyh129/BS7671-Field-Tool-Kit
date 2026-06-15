@@ -151,7 +151,7 @@ export default function History({ onSelect }: HistoryProps) {
       {/* Detail Modal */}
       <AnimatePresence>
         {selectedItem && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="safe-modal-shell fixed inset-0 z-50 flex items-end sm:items-center justify-center">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -163,7 +163,7 @@ export default function History({ onSelect }: HistoryProps) {
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              className="relative w-full max-w-lg bg-hardware-card border border-hardware-border rounded-t-[40px] sm:rounded-[40px] p-8 max-h-[90vh] overflow-y-auto"
+              className="safe-modal-panel relative w-full max-w-lg bg-hardware-card border border-hardware-border rounded-t-[32px] sm:rounded-[32px] p-5 sm:p-7 overflow-y-auto"
             >
               <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-3">
@@ -186,9 +186,9 @@ export default function History({ onSelect }: HistoryProps) {
                   <h4 className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-3">Input Parameters</h4>
                   <div className="grid grid-cols-2 gap-4">
                     {Object.entries(selectedItem.inputs).map(([key, value]) => (
-                      <div key={key} className="p-3 bg-black/40 rounded-xl border border-white/5">
+                      <div key={key} className="result-field p-3 bg-black/40 rounded-xl border border-white/5">
                         <p className="text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">{key.replace(/([A-Z])/g, ' $1').trim()}</p>
-                        <p className="text-sm font-mono font-bold text-white">{String(value)}</p>
+                        <p className="result-field-value text-sm font-mono font-bold text-white">{String(value)}</p>
                       </div>
                     ))}
                   </div>
@@ -201,9 +201,9 @@ export default function History({ onSelect }: HistoryProps) {
                     {Object.entries(selectedItem.results).map(([key, value]) => {
                       if (key === 'isCompliant' || key === 'zsCompliant' || key === 'isAdequate' || key === 'isStable') return null;
                       return (
-                        <div key={key} className="p-3 bg-black/40 rounded-xl border border-white/5">
+                        <div key={key} className="result-field p-3 bg-black/40 rounded-xl border border-white/5">
                           <p className="text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-1">{key.replace(/([A-Z])/g, ' $1').trim()}</p>
-                          <p className="text-sm font-mono font-bold text-white">
+                          <p className="result-field-value text-sm font-mono font-bold text-white">
                             {typeof value === 'number' ? value.toFixed(2) : String(value)}
                           </p>
                         </div>

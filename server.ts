@@ -5,7 +5,10 @@ import dotenv from "dotenv";
 import Stripe from "stripe";
 import path from "path";
 import { fileURLToPath } from "url";
-import admin from "firebase-admin";
+import { getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
+import type { CollectionReference } from "firebase-admin/firestore";
 import { GoogleGenAI } from "@google/genai";
 import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
 
@@ -15,13 +18,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
-if (!admin.apps.length) {
-  admin.initializeApp({
+if (!getApps().length) {
+  initializeApp({
     projectId: firebaseConfig.projectId,
   });
 }
 
-const db = admin.firestore();
+const db = getFirestore();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY;
 const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -50,6 +53,22 @@ const DEFAULT_REGULATORY_UPDATE: RegulatoryUpdate = {
 };
 
 let regulatoryCache: { value: RegulatoryUpdate; expiresAt: number } | null = null;
+
+async function deleteCollectionInBatches(
+  collectionRef: CollectionReference,
+  batchSize = 400
+) {
+  while (true) {
+    const snapshot = await collectionRef.limit(batchSize).get();
+    if (snapshot.empty) return;
+
+    const batch = db.batch();
+    snapshot.docs.forEach(document => batch.delete(document.ref));
+    await batch.commit();
+
+    if (snapshot.size < batchSize) return;
+  }
+}
 
 function normalizeRegulatoryUpdate(data: Partial<RegulatoryUpdate>): RegulatoryUpdate {
   return {
@@ -227,36 +246,39 @@ async function startServer() {
 
   // Account Deletion
   app.post("/api/delete-account", async (req, res) => {
-    const { idToken } = req.body;
+    const authorization = req.header("authorization");
+    const bearerToken = authorization?.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length).trim()
+      : undefined;
+    const idToken = bearerToken || req.body?.idToken;
+
     if (!idToken) {
       return res.status(400).json({ error: "Missing ID token" });
     }
 
     try {
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const decodedToken = await getAuth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
 
       console.log(`Deleting account for user: ${uid}`);
 
-      // 1. Delete History Subcollection
-      const historyRef = db.collection("users").doc(uid).collection("history");
-      const historySnapshot = await historyRef.get();
-      const batch = db.batch();
-      historySnapshot.docs.forEach((doc) => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
+      const userRef = db.collection("users").doc(uid);
 
-      // 2. Delete User Profile
-      await db.collection("users").doc(uid).delete();
+      // Delete user-owned data before removing the authentication record.
+      await deleteCollectionInBatches(userRef.collection("history"));
+      await userRef.delete();
 
-      // 3. Delete from Auth
-      await admin.auth().deleteUser(uid);
+      await getAuth().deleteUser(uid);
 
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting account:", error);
-      res.status(500).json({ error: error.message });
+      const status = error?.code?.startsWith("auth/") ? 401 : 500;
+      res.status(status).json({
+        error: status === 401
+          ? "The sign-in session could not be verified."
+          : "The account could not be deleted."
+      });
     }
   });
 

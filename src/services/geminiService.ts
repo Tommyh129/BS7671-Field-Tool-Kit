@@ -1,3 +1,5 @@
+import { getApiUrl } from './api';
+
 export interface RegulatoryUpdate {
   version: string;
   amendment: string;
@@ -29,24 +31,6 @@ interface CheckRegulatoryUpdateOptions {
   throwOnError?: boolean;
 }
 
-const DEFAULT_API_BASE_URL = "https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app";
-
-function getApiBaseUrl() {
-  const env = ((import.meta as any).env || {}) as Record<string, string | undefined>;
-  const configuredBase = env.VITE_API_BASE_URL;
-
-  if (configuredBase) {
-    return configuredBase.replace(/\/$/, "");
-  }
-
-  const { protocol, origin } = window.location;
-  if (protocol === "http:" || protocol === "https:") {
-    return origin;
-  }
-
-  return DEFAULT_API_BASE_URL;
-}
-
 function normalizeRegulatoryUpdate(data: Partial<RegulatoryUpdate>): RegulatoryUpdate {
   return {
     version: data.version || DEFAULT_REGULATORY_UPDATE.version,
@@ -65,7 +49,7 @@ export async function checkRegulatoryUpdates(options: CheckRegulatoryUpdateOptio
   const query = options.force ? "?refresh=true" : "";
 
   try {
-    const response = await fetch(`${getApiBaseUrl()}/api/regulatory-updates${query}`, {
+    const response = await fetch(getApiUrl(`/api/regulatory-updates${query}`), {
       cache: options.force ? "no-store" : "default",
       headers: { Accept: "application/json" },
       signal: controller.signal,
