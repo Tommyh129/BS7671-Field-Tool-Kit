@@ -84,7 +84,7 @@ Status: ${calculation.isCompliant ? '✅ PASS' : '❌ FAIL'}
 
 Summary: The maximum cable length for this circuit is ${calculation.maxLen.toFixed(1)}m, limited by ${calculation.limitingFactor}.
 -------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
     onShare(text);
   };
@@ -274,6 +274,20 @@ Calculated via BS7671 Field Toolkit
               </div>
             </div>
           )}
+
+          {/* Zs & Temperature Correction Info */}
+          <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 mb-6 space-y-3">
+            <div className="flex items-center gap-2 pb-2 border-b border-hardware-border/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <h4 className="text-[10px] font-extrabold uppercase text-gray-300 tracking-wider">Zs Temperature Correction & 80% Rule</h4>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed font-sans font-medium">
+              To calculate the maximum cable length limited by Earth fault loop impedance (<span className="text-white font-mono">Zs</span>), the cable resistance is automatically corrected using a <span className="text-emerald-500 font-bold">1.2 multiplier</span>. This accounts for conductor temperature rise from 20°C (testing) to 70°C (full load).
+            </p>
+            <p className="text-[10px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded-xl border border-hardware-border/20 font-sans">
+              * On-Site Verification: Standard tabulated Zs limits are for hot (70°C) cables. When verifying loop impedance on-site using a tester at ambient temperature (20°C), compare your measured Zs with <span className="text-white font-bold">80% of the tabulated limit</span> (0.8 factor) to ensure compliance.
+            </p>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <button

@@ -3,12 +3,15 @@ export enum AppMode {
   SMART_CIRCUIT = 'SMART_CIRCUIT',
   VOLTAGE_DROP = 'VOLTAGE_DROP',
   THREE_PHASE = 'THREE_PHASE',
+  THREE_PHASE_MOTOR = 'THREE_PHASE_MOTOR',
   CABLE_FINDER = 'CABLE_FINDER',
   ZS_CALCULATOR = 'ZS_CALCULATOR',
   FAULT_CURRENT = 'FAULT_CURRENT',
   CABLE_RESISTANCE = 'CABLE_RESISTANCE',
   MAX_LENGTH = 'MAX_LENGTH',
   EARTH_ELECTRODE = 'EARTH_ELECTRODE',
+  PROTECTIVE_DEVICE_SELECTOR = 'PROTECTIVE_DEVICE_SELECTOR',
+  DC_VOLTAGE_DROP = 'DC_VOLTAGE_DROP',
   HISTORY = 'HISTORY',
   PRIVACY = 'PRIVACY',
   TERMS = 'TERMS',
@@ -85,6 +88,8 @@ export enum DisconnectionTime {
 export interface CalculationResult {
   loadCurrent: number;
   protectiveDevice: number;
+  suggestedProtectiveDevice?: number;
+  suggestedDeviceType?: DeviceType;
   cableSize: number;
   cpcSize?: number;
   voltageDrop: number;
@@ -100,7 +105,7 @@ export interface CalculationResult {
 export interface CalculationHistory {
   id: string;
   userId: string;
-  type: 'circuit' | 'zs' | 'fault' | 'three-phase' | 'electrode' | 'cable_resistance' | 'max_length' | 'cable_finder';
+  type: 'circuit' | 'zs' | 'fault' | 'three-phase' | 'three-phase-motor' | 'electrode' | 'cable_resistance' | 'max_length' | 'cable_finder' | 'protective_device_selector' | 'dc_voltage_drop';
   title: string;
   inputs: any;
   results: any;

@@ -50,7 +50,7 @@ Stability Check: ${calculation.isStable ? 'STABLE' : 'UNSTABLE (>200Ω)'}
 
 Summary: The measured electrode resistance of ${measuredResistance}Ω is ${calculation.isCompliant ? 'compliant' : 'NOT compliant'} with the ${rcdRating}mA RCD.
 -------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
     onShare(text);
   };

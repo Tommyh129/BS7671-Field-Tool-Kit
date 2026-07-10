@@ -15,6 +15,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
+        'email' in request.auth.token &&
         (request.auth.token.email == "tommyholm97@gmail.com" ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
@@ -22,6 +23,7 @@ service cloud.firestore {
 
     function isTestUser() {
       return isAuthenticated() && 
+        'email' in request.auth.token &&
         (request.auth.token.email.endsWith("@test.com") || 
          request.auth.token.email in ["test@example.com", "tester@circuitsmart.com"]);
     }

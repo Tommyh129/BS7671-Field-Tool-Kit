@@ -2,9 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Zap, Ruler, Settings2, CheckCircle2, AlertTriangle, Share2, History as HistoryIcon, Check, ArrowRightLeft } from 'lucide-react';
 import { SupplyType, InstallationMethod, SupplySystem, DeviceType, CircuitType, CableType } from '../types';
-import { calculateCircuit } from '../utils/calculations';
+import { calculateCircuit, suggestDeviceType } from '../utils/calculations';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import { DEVICE_LIMITS } from '../constants';
 
 interface SmartCircuitDesignerProps {
   onShare: (text: string) => void;
@@ -17,12 +18,34 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
   const [method, setMethod] = useState<InstallationMethod>(InstallationMethod.METHOD_C);
   const [cableType, setCableType] = useState<CableType>(CableType.PVC_PVC);
   const [supplyType, setSupplyType] = useState<SupplyType>(SupplyType.SINGLE_PHASE);
-  const [deviceType, setDeviceType] = useState<DeviceType>(DeviceType.MCB_B);
+  const [deviceTypeOverride, setDeviceTypeOverride] = useState<DeviceType | null>(null);
   const [circuitType, setCircuitType] = useState<CircuitType>(CircuitType.OTHER);
   const [supplySystem, setSupplySystem] = useState<SupplySystem>(SupplySystem.TN_C_S);
   const [zeValue, setZeValue] = useState<string>('0.35');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const lastSavedHistoryRef = React.useRef<string | null>(null);
+
+  const [protectiveDeviceRatingOverride, setProtectiveDeviceRatingOverride] = useState<number | null>(null);
+
+  const suggestedDeviceType = useMemo(() => {
+    const load = parseFloat(loadValue) || 0;
+    const ze = parseFloat(zeValue) || 0;
+    let loadCurrent = load;
+    if (loadUnit === 'kW') {
+      if (supplyType === SupplyType.SINGLE_PHASE) {
+        loadCurrent = (load * 1000) / 230;
+      } else {
+        loadCurrent = (load * 1000) / (1.732 * 400 * 0.9);
+      }
+    }
+    return suggestDeviceType(loadCurrent, supplyType, circuitType, ze);
+  }, [loadValue, loadUnit, supplyType, circuitType, zeValue]);
+
+  const activeDeviceType = deviceTypeOverride || suggestedDeviceType;
+
+  const availableRatings = useMemo(() => {
+    return Object.keys(DEVICE_LIMITS[activeDeviceType]).map(Number).sort((a, b) => a - b);
+  }, [activeDeviceType]);
 
   const zeMap: Record<SupplySystem, number> = {
     [SupplySystem.TN_C_S]: 0.35,
@@ -34,6 +57,14 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
     setSupplySystem(s);
     setZeValue(zeMap[s].toString());
   };
+
+  useEffect(() => {
+    setProtectiveDeviceRatingOverride(null);
+  }, [loadValue, loadUnit, supplyType, activeDeviceType]);
+
+  useEffect(() => {
+    setDeviceTypeOverride(null);
+  }, [loadValue, loadUnit, supplyType, circuitType, zeValue]);
 
   const result = useMemo(() => {
     const load = parseFloat(loadValue) || 0;
@@ -61,9 +92,10 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
       30, // Ambient temp
       1,  // Grouping
       ze,
-      deviceType
+      activeDeviceType,
+      protectiveDeviceRatingOverride || undefined
     );
-  }, [loadValue, loadUnit, length, method, cableType, zeValue, supplyType, deviceType, circuitType]);
+  }, [loadValue, loadUnit, length, method, cableType, zeValue, supplyType, activeDeviceType, circuitType, protectiveDeviceRatingOverride]);
 
   const handleShare = () => {
     if (!result) return;
@@ -79,13 +111,13 @@ Supply: ${supplySystem} (Ze: ${zeValue}Ω)
 
 RESULTS:
 - Cable Size: ${result.cableSize}mm²${result.cpcSize ? ` (Line) / ${result.cpcSize}mm² (CPC)` : ''}
-- Protective Device: ${result.protectiveDevice}A (${deviceType})
+- Protective Device: ${result.protectiveDevice}A (${activeDeviceType})
 - Voltage Drop: ${result.voltageDropPercentage.toFixed(2)}% (${result.isCompliant ? 'PASS' : 'FAIL'})
 - Zs: ${result.zs?.toFixed(2)}Ω (${result.zsCompliant ? 'PASS' : 'FAIL'})
 
 OVERALL COMPLIANCE: ${result.isCompliant ? 'PASS' : 'FAIL'}
 -------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
     onShare(text);
   };
@@ -98,7 +130,7 @@ Calculated via BS7671 Field Toolkit
         auth.currentUser?.uid,
         'circuit',
         `Design: ${result.cableSize}mm² / ${result.protectiveDevice}A`,
-        { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue },
+        { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride },
         result
       );
       setTimeout(() => setIsSavingHistory(false), 2000);
@@ -114,7 +146,7 @@ Calculated via BS7671 Field Toolkit
     const payload = {
       type: 'circuit' as const,
       title: `Design: ${result.cableSize}mm² / ${result.protectiveDevice}A`,
-      inputs: { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue },
+      inputs: { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride },
       results: result
     };
     const signature = JSON.stringify(payload);
@@ -124,7 +156,7 @@ Calculated via BS7671 Field Toolkit
     saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
       console.error('Error auto-saving smart circuit history:', error);
     });
-  }, [result, loadValue, loadUnit, length, method, cableType, supplySystem, zeValue]);
+  }, [result, loadValue, loadUnit, length, method, cableType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride]);
 
   return (
     <div className="space-y-6">
@@ -261,17 +293,32 @@ Calculated via BS7671 Field Toolkit
           </div>
 
           <div>
-            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Protection Device</label>
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Protection Device</label>
+              {deviceTypeOverride !== null && (
+                <button
+                  onClick={() => setDeviceTypeOverride(null)}
+                  className="text-[9px] font-black uppercase text-emerald-500 hover:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20 transition-colors"
+                >
+                  Reset to Auto
+                </button>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
               {Object.values(DeviceType).map((t) => (
                 <button
                   key={t}
-                  onClick={() => setDeviceType(t)}
-                  className={`py-3 px-2 rounded-2xl text-[9px] font-bold transition-all border leading-tight ${
-                    deviceType === t ? 'bg-emerald-500 text-black border-emerald-400' : 'bg-black/40 text-gray-400 border-hardware-border'
+                  onClick={() => setDeviceTypeOverride(t)}
+                  className={`py-3 px-2 rounded-2xl text-[9px] font-bold transition-all border leading-tight flex flex-col items-center justify-center relative overflow-hidden ${
+                    activeDeviceType === t ? 'bg-emerald-500 text-black border-emerald-400 font-extrabold' : 'bg-black/40 text-gray-400 border-hardware-border'
                   }`}
                 >
-                  {t.replace('60898 ', '').replace('BS ', '')}
+                  <span>{t.replace('60898 ', '').replace('BS ', '')}</span>
+                  {suggestedDeviceType === t && (
+                    <span className={`text-[7px] block uppercase font-bold tracking-tight mt-0.5 ${activeDeviceType === t ? 'text-black/75' : 'text-emerald-500/80'}`}>
+                      (Suggested)
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -326,7 +373,9 @@ Calculated via BS7671 Field Toolkit
               <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50">
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Protective Device</p>
                 <p className="text-2xl font-mono font-bold text-white">{result.protectiveDevice}A</p>
-                <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mt-1">{deviceType}</p>
+                <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mt-1">
+                  {activeDeviceType} {deviceTypeOverride === null ? '(Suggested)' : '(Manual)'}
+                </p>
               </div>
               <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50">
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Voltage Drop</p>
@@ -348,8 +397,85 @@ Calculated via BS7671 Field Toolkit
               </div>
             </div>
 
+            {/* Protective Device Override Control */}
+            <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 mb-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-hardware-border/30">
+                <div>
+                  <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Adjust Protective Device Rating</h4>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Suggested: <span className="font-mono font-bold text-emerald-500">{result.suggestedProtectiveDevice}A</span> based on load.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <select
+                      value={result.protectiveDevice}
+                      onChange={(e) => setProtectiveDeviceRatingOverride(parseInt(e.target.value))}
+                      className="bg-black/60 border border-hardware-border rounded-xl pl-3 pr-8 py-2 text-white font-mono font-bold text-xs outline-none focus:border-emerald-500/50 appearance-none cursor-pointer animate-none"
+                    >
+                      {availableRatings.map((rating) => (
+                        <option key={rating} value={rating} className="bg-hardware-card text-white">
+                          {rating}A {rating === result.suggestedProtectiveDevice ? '(Suggested)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+                      <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                      </svg>
+                    </div>
+                  </div>
+                  {protectiveDeviceRatingOverride !== null && (
+                    <button
+                      onClick={() => setProtectiveDeviceRatingOverride(null)}
+                      className="text-[9px] font-black uppercase text-emerald-500 hover:text-emerald-400 bg-emerald-500/10 px-2.5 py-2 rounded-xl border border-emerald-500/20 transition-colors"
+                    >
+                      Auto
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Adjust Device Type</h4>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Suggested: <span className="font-sans font-bold text-emerald-500">{suggestedDeviceType.replace('60898 ', '').replace('BS ', '')}</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <select
+                      value={activeDeviceType}
+                      onChange={(e) => setDeviceTypeOverride(e.target.value as DeviceType)}
+                      className="bg-black/60 border border-hardware-border rounded-xl pl-3 pr-8 py-2 text-white font-mono font-bold text-xs outline-none focus:border-emerald-500/50 appearance-none cursor-pointer animate-none"
+                    >
+                      {Object.values(DeviceType).map((type) => (
+                        <option key={type} value={type} className="bg-hardware-card text-white">
+                          {type.replace('60898 ', '').replace('BS ', '')} {type === suggestedDeviceType ? '(Suggested)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+                      <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                      </svg>
+                    </div>
+                  </div>
+                  {deviceTypeOverride !== null && (
+                    <button
+                      onClick={() => setDeviceTypeOverride(null)}
+                      className="text-[9px] font-black uppercase text-emerald-500 hover:text-emerald-400 bg-emerald-500/10 px-2.5 py-2 rounded-xl border border-emerald-500/20 transition-colors"
+                    >
+                      Auto
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Explanation */}
-            <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 mb-6">
+            <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 mb-4">
               <div className="flex gap-3">
                 {result.isCompliant ? (
                   <CheckCircle2 className="text-emerald-500 shrink-0" size={18} />
@@ -364,6 +490,30 @@ Calculated via BS7671 Field Toolkit
                   </p>
                 </div>
               </div>
+            </div>
+
+            {/* Zs & Temperature Correction Info */}
+            <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 mb-6 space-y-3">
+              <div className="flex items-center gap-2 pb-2 border-b border-hardware-border/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <h4 className="text-[10px] font-extrabold uppercase text-gray-300 tracking-wider">Zs Temperature Correction & 80% Rule</h4>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-relaxed font-sans">
+                Earth fault loop impedance (<span className="text-white font-mono">Zs</span>) calculations are automatically corrected using a <span className="text-emerald-500 font-bold">1.2 multiplier</span> to account for conductor temperature rise from 20°C (ambient testing) to 70°C (safe operating limit under load).
+              </p>
+              <div className="grid grid-cols-2 gap-4 pt-1">
+                <div>
+                  <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest">Tabulated Max Zs (100% Limit)</p>
+                  <p className="text-sm font-mono font-bold text-white">{(result.maxZs).toFixed(2)} Ω</p>
+                </div>
+                <div>
+                  <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest">On-Site Limit (80% Rule of Thumb)</p>
+                  <p className="text-sm font-mono font-bold text-emerald-400">{(result.maxZs * 0.8).toFixed(2)} Ω</p>
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded-xl border border-hardware-border/20 font-sans">
+                * Note: Under unloaded/cold test conditions, actual measured on-site Zs must be compared against the <span className="text-white font-bold">80% limit</span> to ensure compliance when heated under full load.
+              </p>
             </div>
 
             <div className="flex gap-4">

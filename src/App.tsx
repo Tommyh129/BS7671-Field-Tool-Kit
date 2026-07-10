@@ -15,6 +15,7 @@ import {
   Cpu,
   Waves,
   Search,
+  TrendingDown,
   Menu,
   Maximize,
   X,
@@ -34,7 +35,12 @@ import {
   Mail,
   Eye,
   EyeOff,
-  Star as StarIcon
+  Star as StarIcon,
+  Shield,
+  Gauge,
+  BatteryCharging,
+  Cable,
+  Globe
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
@@ -48,7 +54,10 @@ import CableResistanceCalculator from './components/CableResistanceCalculator';
 import MaxLengthCalculator from './components/MaxLengthCalculator';
 import EarthElectrodeCalculator from './components/EarthElectrodeCalculator';
 import ThreePhaseCalculator from './components/ThreePhaseCalculator';
+import ThreePhaseMotorCalculator from './components/ThreePhaseMotorCalculator';
 import SmartCircuitDesigner from './components/SmartCircuitDesigner';
+import ProtectiveDeviceSelector from './components/ProtectiveDeviceSelector';
+import DcVoltageDropCalculator from './components/DcVoltageDropCalculator';
 import History from './components/History';
 import ModalSheet from './components/ModalSheet';
 import { checkRegulatoryUpdates, DEFAULT_REGULATORY_UPDATE, REGULATORY_CACHE_VERSION, RegulatoryUpdate } from './services/geminiService';
@@ -277,6 +286,12 @@ const friendlyAuthError = (error: unknown, action: 'sign-in' | 'sign-up' | 'dele
       return 'Sign-in was cancelled.';
     case 'auth/requires-recent-login':
       return 'For security, verify your identity again before deleting the account.';
+    case 'auth/unauthorized-domain': {
+      const currentHost = typeof window !== 'undefined' ? window.location.host : '';
+      return `Domain "${currentHost || 'unauthorized-domain'}" is not authorized. Since the app is in the AI Studio preview iframe, please:
+1. Open the app in a new browser tab using your Development App URL or Shared App URL where login works directly.
+2. Or, add "ai.studio.google.com" and "aistudio.google.com" (the parent iframe domains) to your Firebase Console > Authentication > Settings > Authorized domains.`;
+    }
     default:
       return action === 'sign-up'
         ? 'The account could not be created. Check the details and try again.'
@@ -1105,7 +1120,7 @@ export default function App() {
       return {
         type: 'circuit',
         title: mode === AppMode.VOLTAGE_DROP
-          ? `Voltage Drop: ${loadKw}kW / ${lengthM}m`
+          ? `AC Voltage Drop: ${loadKw}kW / ${lengthM}m`
           : `Circuit: ${loadKw}kW / ${lengthM}m`,
         inputs: { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType },
         results: {
@@ -1184,14 +1199,14 @@ export default function App() {
     try {
       if (Capacitor.isNativePlatform()) {
         await NativeShare.share({
-          title: 'BS7671 Field Toolkit Calculation',
+          title: 'The Sparkys Mate Calculation',
           text: sharedText
         });
         return;
       }
 
       if (navigator.share) {
-        await navigator.share({ title: 'BS7671 Field Toolkit Calculation', text: sharedText });
+        await navigator.share({ title: 'The Sparkys Mate Calculation', text: sharedText });
         return;
       }
 
@@ -1222,7 +1237,7 @@ export default function App() {
 
       pdf.setFont('helvetica', 'bold');
       pdf.setFontSize(16);
-      pdf.text('BS7671 Field Toolkit Calculation', margin, y);
+      pdf.text('The Sparkys Mate Calculation', margin, y);
       y += 22;
 
       pdf.setFont('helvetica', 'normal');
@@ -1269,7 +1284,7 @@ Device: ${result.protectiveDevice} A (${deviceType})
 V-Drop: ${result.voltageDrop.toFixed(2)}V (${result.voltageDropPercentage.toFixed(1)}%)
 Status: ${result.isCompliant ? '✅ COMPLIANT' : '❌ NON-COMPLIANT'}
 --------------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
 
     const copyToClipboard = async () => {
@@ -1401,7 +1416,9 @@ Calculated via BS7671 Field Toolkit
       AppMode.FAULT_CURRENT,
       AppMode.EARTH_ELECTRODE,
       AppMode.MAX_LENGTH,
-      AppMode.CABLE_RESISTANCE
+      AppMode.CABLE_RESISTANCE,
+      AppMode.PROTECTIVE_DEVICE_SELECTOR,
+      AppMode.THREE_PHASE_MOTOR
     ];
     
     if (proModes.includes(newMode) && !effectiveIsPro) {
@@ -1426,7 +1443,7 @@ Calculated via BS7671 Field Toolkit
     >
       <div className="sm:col-span-2 mb-4 sm:mb-6 flex justify-between items-start gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">BS7671 Field Toolkit</h2>
+          <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">The Sparkys Mate</h2>
           <p className="text-gray-500 text-sm font-medium">Precision electrical engineering suite.</p>
         </div>
         {!effectiveIsPro && (
@@ -1497,6 +1514,8 @@ Calculated via BS7671 Field Toolkit
                 className="px-4 py-3 bg-hardware-card border border-hardware-border rounded-2xl flex items-center gap-2 shrink-0 hover:border-emerald-500/30 transition-colors"
               >
                 {t === AppMode.SMART_CIRCUIT && <Cpu size={14} className="text-emerald-500" />}
+                {t === AppMode.PROTECTIVE_DEVICE_SELECTOR && <Zap size={14} className="text-emerald-500" />}
+                {t === AppMode.DC_VOLTAGE_DROP && <TrendingDown size={14} className="text-emerald-500" />}
                 {t === AppMode.VOLTAGE_DROP && <Waves size={14} className="text-blue-500" />}
                 {t === AppMode.THREE_PHASE && <Zap size={14} className="text-orange-500" />}
                 {t === AppMode.CABLE_FINDER && <Search size={14} className="text-purple-500" />}
@@ -1512,12 +1531,12 @@ Calculated via BS7671 Field Toolkit
       {/* Free Tools Section */}
       <p className="sm:col-span-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Free Tools</p>
 
-      <button 
+      <button
         onClick={() => handleModeChange(AppMode.ZS_CALCULATOR)}
         className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
-          <Activity size={28} />
+          <Gauge size={28} />
         </div>
         <div className="text-left">
           <h3 className="font-bold text-lg text-white">Zs Calculator</h3>
@@ -1526,18 +1545,32 @@ Calculated via BS7671 Field Toolkit
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-emerald-500 transition-colors" />
       </button>
 
-      <button 
+      <button
         onClick={() => handleModeChange(AppMode.VOLTAGE_DROP)}
         className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
-          <Waves size={28} />
+          <TrendingDown size={28} />
         </div>
         <div className="text-left">
-          <h3 className="font-bold text-lg text-white">Voltage Drop</h3>
+          <h3 className="font-bold text-lg text-white">AC Voltage Drop</h3>
           <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Compliance Check</p>
         </div>
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-blue-500 transition-colors" />
+      </button>
+
+      <button
+        onClick={() => handleModeChange(AppMode.DC_VOLTAGE_DROP)}
+        className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
+      >
+        <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
+          <BatteryCharging size={28} />
+        </div>
+        <div className="text-left">
+          <h3 className="font-bold text-lg text-white">DC Voltage Drop</h3>
+          <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Cable Sizing & Drops</p>
+        </div>
+        <ChevronRight className="ml-auto text-gray-700 group-hover:text-emerald-500 transition-colors" />
       </button>
 
       <button 
@@ -1545,7 +1578,7 @@ Calculated via BS7671 Field Toolkit
         className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
         <div className="w-14 h-14 bg-purple-500/10 rounded-2xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
-          <Cpu size={28} />
+          <Calculator size={28} />
         </div>
         <div className="text-left">
           <h3 className="font-bold text-lg text-white">Power Calculator</h3>
@@ -1592,7 +1625,7 @@ Calculated via BS7671 Field Toolkit
         className="sm:col-span-2 bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
       >
         <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform hardware-glow">
-          <Cpu size={28} />
+          <LayoutGrid size={28} />
         </div>
         <div className="text-left">
           <div className="flex items-center gap-2">
@@ -1610,7 +1643,7 @@ Calculated via BS7671 Field Toolkit
       </button>
 
       <div className="sm:col-span-2 grid grid-cols-2 gap-3 sm:gap-4">
-        <button 
+        <button
           onClick={() => handleModeChange(AppMode.FAULT_CURRENT)}
           className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
@@ -1631,12 +1664,12 @@ Calculated via BS7671 Field Toolkit
           )}
         </button>
 
-        <button 
+        <button
           onClick={() => handleModeChange(AppMode.CABLE_RESISTANCE)}
           className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
-            <Ruler size={20} />
+            <Cable size={20} />
           </div>
           <div className="text-left">
             <div className="flex items-center gap-1.5">
@@ -1652,12 +1685,12 @@ Calculated via BS7671 Field Toolkit
           )}
         </button>
 
-        <button 
+        <button
           onClick={() => handleModeChange(AppMode.MAX_LENGTH)}
           className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-purple-500/10 rounded-xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
-            <Maximize size={20} />
+            <Ruler size={20} />
           </div>
           <div className="text-left">
             <div className="flex items-center gap-1.5">
@@ -1673,12 +1706,12 @@ Calculated via BS7671 Field Toolkit
           )}
         </button>
 
-        <button 
+        <button
           onClick={() => handleModeChange(AppMode.EARTH_ELECTRODE)}
           className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
-            <Activity size={20} />
+            <Globe size={20} />
           </div>
           <div className="text-left">
             <div className="flex items-center gap-1.5">
@@ -1686,6 +1719,48 @@ Calculated via BS7671 Field Toolkit
               {!effectiveIsPro && <Lock size={10} className="text-gray-600" />}
             </div>
             <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">Earth Resistance</p>
+          </div>
+          {!effectiveIsPro && (
+            <div className="absolute top-3 right-3 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider">
+              PRO
+            </div>
+          )}
+        </button>
+
+        <button
+          onClick={() => handleModeChange(AppMode.PROTECTIVE_DEVICE_SELECTOR)}
+          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
+        >
+          <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
+            <Shield size={20} />
+          </div>
+          <div className="text-left">
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-bold text-sm text-white leading-tight">Protective Device Selector</h3>
+              {!effectiveIsPro && <Lock size={10} className="text-gray-600 shrink-0" />}
+            </div>
+            <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider mt-1">MCB & Fuse Suggestion</p>
+          </div>
+          {!effectiveIsPro && (
+            <div className="absolute top-3 right-3 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider">
+              PRO
+            </div>
+          )}
+        </button>
+
+        <button
+          onClick={() => handleModeChange(AppMode.THREE_PHASE_MOTOR)}
+          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
+        >
+          <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
+            <Cpu size={20} />
+          </div>
+          <div className="text-left">
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-bold text-sm text-white">3-Phase Motor</h3>
+              {!effectiveIsPro && <Lock size={10} className="text-gray-600" />}
+            </div>
+            <p className="text-gray-500 text-[8px] font-bold uppercase tracking-wider">FLC & Starter Sizing</p>
           </div>
           {!effectiveIsPro && (
             <div className="absolute top-3 right-3 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider">
@@ -1740,7 +1815,7 @@ Calculated via BS7671 Field Toolkit
             <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest animate-pulse mb-2">
               {isSyncing ? "Syncing Subscription..." : "Initializing Suite..."}
             </p>
-            <p className="text-gray-700 text-[8px] uppercase tracking-widest">BS7671 Field Toolkit v1.0.10</p>
+            <p className="text-gray-700 text-[8px] uppercase tracking-widest">The Sparkys Mate v1.0.10</p>
           </div>
         </div>
       </div>
@@ -1766,7 +1841,7 @@ Calculated via BS7671 Field Toolkit
           <div className="max-w-2xl mx-auto flex items-center justify-between">
             <div id="header-logo" className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
               <HeaderLogoMark />
-              <h1 className="font-bold text-lg tracking-tight">BS7671 Field Toolkit</h1>
+              <h1 className="font-bold text-lg tracking-tight">The Sparkys Mate</h1>
             </div>
             <div className="flex items-center gap-3">
               {effectiveIsPro && (
@@ -1913,6 +1988,38 @@ Calculated via BS7671 Field Toolkit
               </div>
               <SmartCircuitDesigner onShare={handleShareResult} />
             </motion.div>
+          ) : mode === AppMode.PROTECTIVE_DEVICE_SELECTOR ? (
+            <motion.div
+              key={mode}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="text-xl font-bold flex-1 text-emerald-500">Protective Device Selector</h2>
+              </div>
+              <ProtectiveDeviceSelector onShare={handleShareResult} />
+            </motion.div>
+          ) : mode === AppMode.DC_VOLTAGE_DROP ? (
+            <motion.div
+              key={mode}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="text-xl font-bold flex-1 text-emerald-500">DC Voltage Drop</h2>
+              </div>
+              <DcVoltageDropCalculator onShare={handleShareResult} />
+            </motion.div>
           ) : mode === AppMode.THREE_PHASE ? (
             <motion.div
               key={mode}
@@ -1928,6 +2035,22 @@ Calculated via BS7671 Field Toolkit
                 <h2 className="text-xl font-bold flex-1 text-orange-500">Power Calculator</h2>
               </div>
               <ThreePhaseCalculator onShare={handleShareResult} />
+            </motion.div>
+          ) : mode === AppMode.THREE_PHASE_MOTOR ? (
+            <motion.div
+              key={mode}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="text-xl font-bold flex-1 text-emerald-500">3-Phase Motor Calculator</h2>
+              </div>
+              <ThreePhaseMotorCalculator onShare={handleShareResult} />
             </motion.div>
           ) : mode === AppMode.HISTORY ? (
             <motion.div
@@ -1967,7 +2090,7 @@ Calculated via BS7671 Field Toolkit
                   Last updated: 15 June 2026
                 </p>
                 <p>
-                  This Privacy Policy explains how BS7671 Field Toolkit handles information when you use the app, create an account, save calculations, contact support, or purchase a subscription.
+                  This Privacy Policy explains how The Sparkys Mate handles information when you use the app, create an account, save calculations, contact support, or purchase a subscription.
                 </p>
 
                 <section className="space-y-2">
@@ -2056,7 +2179,7 @@ Calculated via BS7671 Field Toolkit
                   Last updated: 15 June 2026
                 </p>
                 <p>
-                  By using BS7671 Field Toolkit, you agree to these terms. If you do not agree, do not use the app.
+                  By using The Sparkys Mate, you agree to these terms. If you do not agree, do not use the app.
                 </p>
 
                 <section className="space-y-2">
@@ -2245,7 +2368,7 @@ Calculated via BS7671 Field Toolkit
                     <ArrowLeft size={20} />
                   </button>
                   <h2 className="text-xl font-bold flex-1">
-                    {mode === AppMode.VOLTAGE_DROP && 'Voltage Drop'}
+                    {mode === AppMode.VOLTAGE_DROP && 'AC Voltage Drop'}
                     {mode === AppMode.CABLE_FINDER && 'Cable Size Finder'}
                   </h2>
                   {!showResults && (
@@ -2757,7 +2880,7 @@ Calculated via BS7671 Field Toolkit
                       </div>
                       <div>
                         <h4 className="font-bold text-sm">Circuit Summary</h4>
-                        <p className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">BS7671 Field Toolkit • {regulatoryInfo.version}</p>
+                        <p className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">The Sparkys Mate • {regulatoryInfo.version}</p>
                       </div>
                     </div>
 
@@ -2807,7 +2930,7 @@ Calculated via BS7671 Field Toolkit
                         {new Date().toLocaleDateString()}
                       </span>
                       <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">
-                        Calculated via BS7671 Field Toolkit
+                        Calculated via The Sparkys Mate
                       </span>
                     </div>
                   </div>
@@ -2823,7 +2946,7 @@ Calculated via BS7671 Field Toolkit
                     </div>
                     <div>
                       <h4 className="font-bold text-xl text-gray-900">Electrical Circuit Report</h4>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">BS7671 Field Toolkit • {regulatoryInfo.version}</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">The Sparkys Mate • {regulatoryInfo.version}</p>
                     </div>
                   </div>
 
@@ -2888,7 +3011,7 @@ Calculated via BS7671 Field Toolkit
                       Report Date: {new Date().toLocaleDateString()}
                     </span>
                     <span className="text-[10px] font-bold uppercase tracking-widest">
-                      BS7671 Field Toolkit Professional
+                      The Sparkys Mate Professional
                     </span>
                   </div>
                 </div>
@@ -3417,4 +3540,4 @@ Calculated via BS7671 Field Toolkit
   );
 }
 
-// End of BS7671 Field Toolkit components
+// End of The Sparkys Mate components

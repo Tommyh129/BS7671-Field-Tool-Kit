@@ -2,6 +2,31 @@ import { SupplyType, InstallationMethod, CalculationResult, CircuitType, CableTy
 import { CABLE_DATABASE, VOLTAGES, AMBIENT_TEMP_FACTORS, GROUPING_FACTORS, DEVICE_LIMITS } from '../constants';
 import { getCircuitR1R2MilliOhmsPerMetre, getStandardCpcSize } from './resistance';
 
+export function suggestDeviceType(
+  loadCurrent: number,
+  supplyType: SupplyType,
+  circuitType: CircuitType,
+  ze: number
+): DeviceType {
+  // If Three Phase, Type C is preferred (highly standard for three-phase commercial/industrial motors and loads)
+  if (supplyType === SupplyType.THREE_PHASE) {
+    return DeviceType.MCB_C;
+  }
+
+  // If Lighting, Type B or Type C can be suggested.
+  // Modern lighting circuits use LEDs with high inrush currents, making Type C recommended.
+  // But on longer runs or high Ze, Type B is suggested to avoid huge cables due to Zs.
+  if (circuitType === CircuitType.LIGHTING) {
+    if (ze > 0.8) {
+      return DeviceType.MCB_B;
+    }
+    return DeviceType.MCB_C;
+  }
+
+  // Otherwise, default to Type B for domestic/light commercial sockets/other loads.
+  return DeviceType.MCB_B;
+}
+
 export function calculateCircuit(
   loadKw: number,
   lengthM: number,
@@ -12,7 +37,8 @@ export function calculateCircuit(
   ambientTemp: number = 30,
   groupingCount: number = 1,
   ze: number = 0.35,
-  deviceType: DeviceType = DeviceType.MCB_B
+  deviceType?: DeviceType,
+  protectiveDeviceOverride?: number
 ): CalculationResult | null {
   if (loadKw <= 0 || lengthM <= 0) return null;
 
@@ -30,10 +56,17 @@ export function calculateCircuit(
     loadCurrent = powerWatts / (1.732 * VOLTAGES.THREE_PHASE * 0.9);
   }
 
+  // Determine suggested and active device types
+  const suggestedDeviceType = suggestDeviceType(loadCurrent, supplyType, circuitType, ze);
+  const activeDeviceType = deviceType !== undefined ? deviceType : suggestedDeviceType;
+
   // 3. Select Protective Device (In)
   // For MCBs we use standard ratings, for others we might need to filter by available ratings in DEVICE_LIMITS
-  const availableRatings = Object.keys(DEVICE_LIMITS[deviceType]).map(Number).sort((a, b) => a - b);
-  const protectiveDevice = availableRatings.find((d) => d >= loadCurrent) || availableRatings[availableRatings.length - 1];
+  const availableRatings = Object.keys(DEVICE_LIMITS[activeDeviceType]).map(Number).sort((a, b) => a - b);
+  const suggestedDevice = availableRatings.find((d) => d >= loadCurrent) || availableRatings[availableRatings.length - 1];
+  const protectiveDevice = protectiveDeviceOverride && availableRatings.includes(protectiveDeviceOverride)
+    ? protectiveDeviceOverride
+    : suggestedDevice;
 
   // 4. Apply Correction Factors
   // Ca (Ambient Temp) and Cg (Grouping)
@@ -42,8 +75,8 @@ export function calculateCircuit(
   const totalCorrection = Ca * Cg;
 
   // 5. Choose cable size based on current capacity table
-  // Iz >= In / (Ca * Cg)
-  const requiredCapacity = protectiveDevice / totalCorrection;
+  // Iz >= In / (Ca * Cg) and Iz >= Ib / (Ca * Cg)
+  const requiredCapacity = Math.max(protectiveDevice, loadCurrent) / totalCorrection;
   let selectedCable = cableSizes.find((c) => c.capacity[method] >= requiredCapacity);
 
   if (!selectedCable) {
@@ -69,7 +102,7 @@ export function calculateCircuit(
     return ze + r1r2;
   };
 
-  const maxZs = DEVICE_LIMITS[deviceType][protectiveDevice] || 0;
+  const maxZs = DEVICE_LIMITS[activeDeviceType][protectiveDevice] || 0;
 
   // Try to find a cable that satisfies both Voltage Drop and Zs
   let finalCable = selectedCable;
@@ -123,6 +156,8 @@ export function calculateCircuit(
   return {
     loadCurrent,
     protectiveDevice,
+    suggestedProtectiveDevice: suggestedDevice,
+    suggestedDeviceType: suggestedDeviceType,
     cableSize: finalCable.size,
     cpcSize,
     voltageDrop: finalVd,

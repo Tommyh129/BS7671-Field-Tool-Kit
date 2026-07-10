@@ -52,7 +52,7 @@ Protective Device Adequate: ${calculation.isAdequate ? 'YES' : 'NO'}
 
 Summary: The prospective fault current is ${calculation.ka.toFixed(2)}kA. The ${parseFloat(breakingCapacity) / 1000}kA device is ${calculation.isAdequate ? 'adequate' : 'NOT adequate'} for this location.
 -------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
     onShare(text);
   };

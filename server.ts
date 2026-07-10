@@ -4,7 +4,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import Stripe from "stripe";
 import path from "path";
-import { fileURLToPath } from "url";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
@@ -13,9 +12,6 @@ import { GoogleGenAI } from "@google/genai";
 import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
 if (!getApps().length) {
@@ -126,7 +122,7 @@ async function startServer() {
 
     // Handle the event
     switch (event.type) {
-      case "checkout.session.completed":
+      case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
         const userId = session.client_reference_id;
         
@@ -143,7 +139,8 @@ async function startServer() {
           }
         }
         break;
-      case "customer.subscription.deleted":
+      }
+      case "customer.subscription.deleted": {
         const subscription = event.data.object as Stripe.Subscription;
         // We need to find the user by subscriptionId
         try {
@@ -161,6 +158,7 @@ async function startServer() {
           console.error(`Error revoking Pro for subscription ${subscription.id}:`, error);
         }
         break;
+      }
       default:
         console.log(`Unhandled event type ${event.type}`);
     }
@@ -217,7 +215,7 @@ async function startServer() {
             price_data: {
               currency: "gbp",
               product_data: {
-                name: "BS7671 Field Toolkit Pro Subscription",
+                name: "The Sparkys Mate Pro Subscription",
                 description: "Unlock all advanced electrical design tools (1 Month Free Trial)",
               },
               unit_amount: 599, // £5.99
@@ -290,9 +288,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 

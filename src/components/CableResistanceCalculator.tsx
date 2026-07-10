@@ -54,7 +54,7 @@ Total R1+R2 = ${calculation.totalR.toFixed(3)} Ω
 
 Summary: For a ${length}m run of ${cableSize}/${cpcSize}mm² ${material} cable, the total resistance is ${calculation.totalR.toFixed(3)}Ω.
 -------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
     onShare(text);
   };

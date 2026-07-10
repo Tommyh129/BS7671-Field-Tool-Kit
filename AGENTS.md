@@ -1,4 +1,4 @@
-# Project Rules: BS7671 Field Toolkit Pro
+# Project Rules: The Sparkys Mate
 
 ## Visual Locking Directive
 **CRITICAL:** The visual design, layout, and styling of this application are strictly locked. 

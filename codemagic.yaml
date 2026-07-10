@@ -1,4 +1,4 @@
-# BS7671 Field Toolkit Pro - Production Build Configuration
+# The Sparkys Mate - Production Build Configuration
 workflows:
   ios-workflow:
     name: iOS Build Workflow

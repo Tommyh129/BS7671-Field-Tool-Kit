@@ -1,7 +1,7 @@
 import { CableType } from '../types';
 import { CABLE_CONFIGURATIONS, CABLE_RESISTANCE } from '../constants';
 
-const STANDARD_CPC_SIZES = [1, 1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240];
+const STANDARD_CPC_SIZES = [1, 1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400];
 
 const TWIN_AND_EARTH_R1_R2 = new Map(
   CABLE_CONFIGURATIONS.map((configuration) => {

@@ -73,23 +73,33 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
     const lengthVal = parseFloat(cableLength) || 0;
     const resistanceMilliOhms = parseFloat(resistance) || 0;
     
-    // Apply 1.2 factor for conductor temperature rise (20°C to 70°C) as per BS 7671
-    let r1r2 = 0;
+    // Raw R1+R2 at 20°C (ambient testing temperature)
+    let rawR1R2 = 0;
     if (useTotalResistance) {
-      r1r2 = (parseFloat(totalResistance) || 0) * 1.2;
+      rawR1R2 = parseFloat(totalResistance) || 0;
     } else {
-      r1r2 = (resistanceMilliOhms * lengthVal * 1.2) / 1000;
+      rawR1R2 = (resistanceMilliOhms * lengthVal) / 1000;
     }
 
+    // Apply 1.2 factor for conductor temperature rise (20°C to 70°C) as per BS 7671 Appendix 14
+    const r1r2 = rawR1R2 * 1.2;
+
     const zs = zeVal + r1r2;
+    const coldZs = zeVal + rawR1R2;
     const maxZs = DEVICE_LIMITS[deviceType][protectiveDevice] || 0;
+    const maxZs80 = maxZs * 0.8;
     const isCompliant = zs <= maxZs;
+    const isColdZsCompliant = coldZs <= maxZs80;
 
     return {
       zs,
+      coldZs,
       maxZs,
+      maxZs80,
       isCompliant,
-      r1r2
+      isColdZsCompliant,
+      r1r2,
+      rawR1R2
     };
   }, [ze, resistance, cableLength, deviceType, protectiveDevice, useTotalResistance, totalResistance]);
 
@@ -112,7 +122,7 @@ Explanation: ${calculation.isCompliant
   ? `The calculated Zs of ${calculation.zs.toFixed(2)}Ω is within the maximum permitted limit of ${calculation.maxZs.toFixed(2)}Ω for a ${deviceType} ${protectiveDevice}A. Disconnection time requirements are met.`
   : `The calculated Zs of ${calculation.zs.toFixed(2)}Ω exceeds the maximum permitted limit of ${calculation.maxZs.toFixed(2)}Ω. Disconnection time requirements are NOT met.`}
 -------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
     onShare(text);
   };
@@ -424,37 +434,91 @@ Calculated via BS7671 Field Toolkit
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              <div>
-                <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Calculated Zs</p>
-                <p className={`text-2xl font-mono font-bold ${calculation.isCompliant ? 'text-white' : 'text-red-500'}`}>
-                  {calculation.zs.toFixed(2)}<span className="text-sm ml-1">Ω</span>
-                </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+              {/* Method 1: Design (Hot/70C) */}
+              <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-extrabold uppercase text-emerald-500 tracking-wider">Method A: Design (Hot)</span>
+                  <span className="text-[7px] text-gray-500 font-bold uppercase tracking-widest bg-black/30 px-1.5 py-0.5 rounded border border-hardware-border/30">Loaded 70°C</span>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest">Calculated Hot Zs (Ze + 1.2 × R1+R2)</p>
+                  <p className="text-xl font-mono font-bold text-white">
+                    {calculation.zs.toFixed(2)} Ω
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest">Tabulated Max Zs (100% Limit)</p>
+                  <p className="text-sm font-mono font-bold text-gray-300">
+                    {calculation.maxZs.toFixed(2)} Ω
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-hardware-border/20 flex items-center gap-1.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${calculation.isCompliant ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <span className="text-[8px] font-extrabold uppercase tracking-widest text-gray-400">
+                    Status: {calculation.isCompliant ? 'Pass' : 'Fail'}
+                  </span>
+                </div>
               </div>
-              <div>
-                <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Max Permitted</p>
-                <p className="text-2xl font-mono font-bold text-white">
-                  {calculation.maxZs.toFixed(2)}<span className="text-sm ml-1">Ω</span>
-                </p>
+
+              {/* Method 2: On-Site Test (Cold/20C) */}
+              <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-extrabold uppercase text-emerald-500 tracking-wider">Method B: On-Site (Cold)</span>
+                  <span className="text-[7px] text-emerald-500/90 font-bold uppercase tracking-widest bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/10">Unloaded 20°C (80% Rule)</span>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest">Measured Cold Zs (Ze + R1+R2 at 20°C)</p>
+                  <p className="text-xl font-mono font-bold text-white">
+                    {calculation.coldZs.toFixed(2)} Ω
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest">Rule of Thumb Max Zs (80% Limit)</p>
+                  <p className="text-sm font-mono font-bold text-gray-300">
+                    {calculation.maxZs80.toFixed(2)} Ω
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-hardware-border/20 flex items-center gap-1.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${calculation.isColdZsCompliant ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <span className="text-[8px] font-extrabold uppercase tracking-widest text-gray-400">
+                    Status: {calculation.isColdZsCompliant ? 'Pass' : 'Fail'}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50">
+            <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50 space-y-4">
               <div className="flex gap-3">
                 {calculation.isCompliant ? (
-                  <CheckCircle2 className="text-emerald-500 shrink-0" size={18} />
+                  <CheckCircle2 className="text-emerald-500 shrink-0 mt-0.5" size={18} />
                 ) : (
-                  <AlertTriangle className="text-red-500 shrink-0" size={18} />
+                  <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={18} />
                 )}
                 <div className="space-y-2">
-                  <p className="text-xs text-gray-400 leading-relaxed">
+                  <p className="text-xs text-gray-300 leading-relaxed font-sans">
                     {calculation.isCompliant 
-                      ? `The calculated Zs of ${calculation.zs.toFixed(2)}Ω is within the maximum permitted limit of ${calculation.maxZs.toFixed(2)}Ω for a ${deviceType} ${protectiveDevice}A. Disconnection time requirements are met.`
-                      : `The calculated Zs of ${calculation.zs.toFixed(2)}Ω exceeds the maximum permitted limit of ${calculation.maxZs.toFixed(2)}Ω. Disconnection time requirements are NOT met.`}
+                      ? `The calculated Hot Zs (${calculation.zs.toFixed(2)}Ω) is within the tabulated maximum of ${calculation.maxZs.toFixed(2)}Ω. Disconnection requirements of BS 7671 are met under maximum load.`
+                      : `The calculated Hot Zs (${calculation.zs.toFixed(2)}Ω) exceeds the tabulated maximum of ${calculation.maxZs.toFixed(2)}Ω. Disconnection requirements are NOT met.`}
                   </p>
-                  <p className="text-[10px] text-gray-500 italic">
-                    * Calculation includes a 1.2 multiplier for conductor temperature rise (70°C operating temp).
-                  </p>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-hardware-border/20 space-y-3">
+                <h4 className="text-[9px] font-extrabold uppercase text-gray-400 tracking-wider">How these factors are applied:</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[10px] text-gray-500 leading-relaxed">
+                  <div className="space-y-1 bg-black/20 p-2.5 rounded-xl border border-hardware-border/20">
+                    <p className="font-bold text-gray-400 uppercase text-[8px] tracking-wider">1. Temperature Correction (1.2x)</p>
+                    <p>
+                      Conductor resistance values in standard tables are given at 20°C. In operation, the cable heats up to 70°C. We multiply the 20°C resistance by <span className="text-emerald-500 font-bold">1.2</span> to compute the expected "hot" loop resistance.
+                    </p>
+                  </div>
+                  <div className="space-y-1 bg-black/20 p-2.5 rounded-xl border border-hardware-border/20">
+                    <p className="font-bold text-gray-400 uppercase text-[8px] tracking-wider">2. 0.8 / 80% Rule of Thumb</p>
+                    <p>
+                      When verifying loop impedance on-site using a tester, the cables are cold (~20°C). Under the "Rule of Thumb", we verify that measured Zs is within <span className="text-emerald-500 font-bold">80%</span> (0.8 factor) of the tabulated limit, ensuring it remains compliant when heated under load.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -554,7 +618,7 @@ Calculated via BS7671 Field Toolkit
                       </div>
                       <div>
                         <h4 className="font-bold text-sm">Zs Calculation</h4>
-                        <p className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">BS7671 Field Toolkit • Zs Module</p>
+                        <p className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">The Sparkys Mate • Zs Module</p>
                       </div>
                     </div>
 
@@ -606,7 +670,7 @@ Calculated via BS7671 Field Toolkit
                     </div>
                     <div>
                       <h4 className="font-bold text-xl text-gray-900">Zs Impedance Report</h4>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">BS7671 Field Toolkit • Zs Module</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">The Sparkys Mate • Zs Module</p>
                     </div>
                   </div>
 
@@ -678,7 +742,7 @@ Calculated via BS7671 Field Toolkit
                       Report Date: {new Date().toLocaleDateString()}
                     </span>
                     <span className="text-[10px] font-bold uppercase tracking-widest">
-                      BS7671 Field Toolkit Professional
+                      The Sparkys Mate Professional
                     </span>
                   </div>
                 </div>

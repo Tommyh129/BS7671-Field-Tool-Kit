@@ -71,7 +71,7 @@ Formula: ${calcDirection === 'toPower'
   ? `P = ${phaseType === 'three' ? '√3 × ' : ''}V × I × PF` 
   : `I = P / (${phaseType === 'three' ? '√3 × ' : ''}V × PF)`}
 -------------------------
-Calculated via BS7671 Field Toolkit
+Calculated via The Sparkys Mate
     `.trim();
     onShare(text);
   };

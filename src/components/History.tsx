@@ -14,7 +14,14 @@ import {
   X,
   FileText,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  TrendingDown,
+  LayoutGrid,
+  Gauge,
+  BatteryCharging,
+  Cable,
+  Globe,
+  Calculator
 } from 'lucide-react';
 import { CalculationHistory } from '../types';
 import { getHistory, deleteHistoryItem } from '../services/historyService';
@@ -65,14 +72,16 @@ export default function History({ onSelect }: HistoryProps) {
 
   const getTypeIcon = (type: CalculationHistory['type']) => {
     switch (type) {
-      case 'circuit': return <Zap className="text-emerald-500" size={18} />;
-      case 'zs': return <Activity className="text-blue-500" size={18} />;
-      case 'fault': return <AlertTriangle className="text-orange-500" size={18} />;
-      case 'three-phase': return <Cpu className="text-purple-500" size={18} />;
-      case 'electrode': return <Waves className="text-cyan-500" size={18} />;
-      case 'cable_resistance': return <Ruler className="text-blue-500" size={18} />;
+      case 'circuit': return <LayoutGrid className="text-emerald-500" size={18} />;
+      case 'zs': return <Gauge className="text-emerald-500" size={18} />;
+      case 'fault': return <Zap className="text-orange-500" size={18} />;
+      case 'three-phase': return <Calculator className="text-purple-500" size={18} />;
+      case 'three-phase-motor': return <Cpu className="text-emerald-500" size={18} />;
+      case 'electrode': return <Globe className="text-emerald-500" size={18} />;
+      case 'cable_resistance': return <Cable className="text-blue-500" size={18} />;
       case 'max_length': return <Ruler className="text-purple-500" size={18} />;
       case 'cable_finder': return <Search className="text-purple-500" size={18} />;
+      case 'dc_voltage_drop': return <BatteryCharging className="text-emerald-500" size={18} />;
       default: return <FileText className="text-gray-500" size={18} />;
     }
   };
