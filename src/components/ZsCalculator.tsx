@@ -55,7 +55,7 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
     if (!availableRatings.includes(protectiveDevice)) {
       setProtectiveDevice(availableRatings[0]);
     }
-  }, [deviceType]);
+  }, [deviceType, protectiveDevice]);
 
   // Update resistance when cable size changes
   useEffect(() => {

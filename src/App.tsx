@@ -235,6 +235,12 @@ const nativePurchaseUserOptions = (uid: string) => {
   return Capacitor.getPlatform() === 'ios' ? {} : { userId: uid };
 };
 
+const TEST_EMAILS = ["test@example.com", "tester@circuitsmart.com"];
+const isAutoPro = (email: string) => {
+  const e = email.toLowerCase().trim();
+  return e === "tommyholm97@gmail.com" || TEST_EMAILS.includes(e) || e.endsWith("@test.com");
+};
+
 const productUnavailableMessage = (productIds: string[]) => {
   if (Capacitor.getPlatform() === 'ios') {
     return `Apple StoreKit did not return the configured subscription product (${productIdLabel(productIds)}). Reinstall the latest TestFlight build and check the App ID/provisioning profile has In-App Purchase enabled for com.bs7671.fieldtoolkit. If you already subscribed, use Restore Purchases.`;
@@ -340,12 +346,6 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const TEST_EMAILS = ["test@example.com", "tester@circuitsmart.com"];
-  const isAutoPro = (email: string) => {
-    const e = email.toLowerCase().trim();
-    return e === "tommyholm97@gmail.com" || TEST_EMAILS.includes(e) || e.endsWith("@test.com");
-  };
-
   const [isSyncing, setIsSyncing] = useState(false);
   const [regulatoryInfo, setRegulatoryInfo] = useState<RegulatoryUpdate>(DEFAULT_REGULATORY_UPDATE);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
@@ -390,7 +390,7 @@ export default function App() {
     }
   };
 
-  const setNativeProAccess = (uid: string, hasAccess: boolean) => {
+  const setNativeProAccess = useCallback((uid: string, hasAccess: boolean) => {
     setHasNativeProPurchase(hasAccess);
     const storageKey = nativeProStorageKey(uid);
     if (hasAccess) {
@@ -398,7 +398,7 @@ export default function App() {
     } else {
       localStorage.removeItem(storageKey);
     }
-  };
+  }, []);
 
   const effectiveIsPro = useMemo(() => {
     // Force Pro for specific testing accounts if needed
@@ -769,6 +769,29 @@ export default function App() {
     }
   };
 
+  const handleSuccessfulPurchase = useCallback(async () => {
+    if (!user) return;
+    console.log("App: Handling successful purchase for user:", user.uid);
+
+    setNativeProAccess(user.uid, true);
+    setIsPro(true);
+    setShowUpgradeModal(false);
+
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(userDocRef, {
+        uid: user.uid,
+        email: user.email || '',
+        isPro: true,
+        displayName: user.displayName || '',
+        photoURL: user.photoURL || '',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (error) {
+      console.error("App: Failed to sync Pro status to Firestore; keeping local store entitlement active.", error);
+    }
+  }, [setNativeProAccess, user]);
+
   // --- IAP Initialization ---
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -796,30 +819,7 @@ export default function App() {
     };
 
     checkActivePurchases();
-  }, [user]);
-
-  const handleSuccessfulPurchase = async () => {
-    if (!user) return;
-    console.log("App: Handling successful purchase for user:", user.uid);
-
-    setNativeProAccess(user.uid, true);
-    setIsPro(true);
-    setShowUpgradeModal(false);
-
-    try {
-      const userDocRef = doc(db, 'users', user.uid);
-      await setDoc(userDocRef, {
-        uid: user.uid,
-        email: user.email || '',
-        isPro: true,
-        displayName: user.displayName || '',
-        photoURL: user.photoURL || '',
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    } catch (error) {
-      console.error("App: Failed to sync Pro status to Firestore; keeping local store entitlement active.", error);
-    }
-  };
+  }, [handleSuccessfulPurchase, user]);
 
   const handleRestorePurchases = async () => {
     if (!user) return;
