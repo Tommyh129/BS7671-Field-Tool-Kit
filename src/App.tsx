@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Zap, 
-  Ruler, 
-  Settings2, 
-  CheckCircle2, 
-  AlertTriangle, 
-  ChevronRight, 
+import {
+  Zap,
+  Ruler,
+  Settings2,
+  CheckCircle2,
+  AlertTriangle,
+  ChevronRight,
   Info,
   Calculator,
   ArrowLeft,
@@ -70,11 +70,11 @@ import { Browser as CapacitorBrowser } from '@capacitor/browser';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { InAppPurchase } from 'capacitor-plugin-purchase';
 import { Share as NativeShare } from '@capacitor/share';
-import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+import {
+  signInWithPopup,
+  GoogleAuthProvider,
   OAuthProvider,
-  onAuthStateChanged, 
+  onAuthStateChanged,
   signOut,
   User,
   signInWithEmailAndPassword,
@@ -86,10 +86,10 @@ import {
   updateProfile
 } from 'firebase/auth';
 import type { AuthCredential } from 'firebase/auth';
-import { 
-  doc, 
-  onSnapshot, 
-  setDoc, 
+import {
+  doc,
+  onSnapshot,
+  setDoc,
   getDoc,
   getDocFromServer,
   updateDoc
@@ -235,12 +235,6 @@ const nativePurchaseUserOptions = (uid: string) => {
   return Capacitor.getPlatform() === 'ios' ? {} : { userId: uid };
 };
 
-const TEST_EMAILS = ["test@example.com", "tester@circuitsmart.com"];
-const isAutoPro = (email: string) => {
-  const e = email.toLowerCase().trim();
-  return e === "tommyholm97@gmail.com" || TEST_EMAILS.includes(e) || e.endsWith("@test.com");
-};
-
 const productUnavailableMessage = (productIds: string[]) => {
   if (Capacitor.getPlatform() === 'ios') {
     return `Apple StoreKit did not return the configured subscription product (${productIdLabel(productIds)}). Reinstall the latest TestFlight build and check the App ID/provisioning profile has In-App Purchase enabled for com.bs7671.fieldtoolkit. If you already subscribed, use Restore Purchases.`;
@@ -330,7 +324,7 @@ const HeaderLogoMark = () => (
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.HOME);
-  
+
   // --- Auth & Profile State ---
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -345,6 +339,12 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const TEST_EMAILS = ["test@example.com", "tester@circuitsmart.com"];
+  const isAutoPro = (email: string) => {
+    const e = email.toLowerCase().trim();
+    return e === "tommyholm97@gmail.com" || TEST_EMAILS.includes(e) || e.endsWith("@test.com");
+  };
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [regulatoryInfo, setRegulatoryInfo] = useState<RegulatoryUpdate>(DEFAULT_REGULATORY_UPDATE);
@@ -390,7 +390,7 @@ export default function App() {
     }
   };
 
-  const setNativeProAccess = useCallback((uid: string, hasAccess: boolean) => {
+  const setNativeProAccess = (uid: string, hasAccess: boolean) => {
     setHasNativeProPurchase(hasAccess);
     const storageKey = nativeProStorageKey(uid);
     if (hasAccess) {
@@ -398,14 +398,14 @@ export default function App() {
     } else {
       localStorage.removeItem(storageKey);
     }
-  }, []);
+  };
 
   const effectiveIsPro = useMemo(() => {
     // Force Pro for specific testing accounts if needed
     if (user && isAutoPro(user.email || "")) return true;
     return isPro || hasNativeProPurchase;
   }, [isPro, hasNativeProPurchase, user]);
-  
+
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [cleanMode, setCleanMode] = useState(false);
@@ -414,7 +414,7 @@ export default function App() {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
-  
+
   // Shared States
   const [loadKw, setLoadKw] = useState<string>('');
   const [lengthM, setLengthM] = useState<string>('');
@@ -553,13 +553,13 @@ export default function App() {
   // --- Core Type Logic ---
   // We keep the state but remove the restrictive filtering and auto-switching
   // to ensure all methods are available as requested.
-  
+
   const allMethods = useMemo(() => Object.values(InstallationMethod), []);
 
   // --- Auth & IAP Logic ---
   useEffect(() => {
     console.log("App: Initializing Auth & IAP...");
-    
+
     // Initialize Native IAP if on mobile
     if (Capacitor.isNativePlatform()) {
       try {
@@ -585,14 +585,14 @@ export default function App() {
       const email = firebaseUser?.email?.toLowerCase().trim() || "";
       console.log("App: Auth State Changed ->", email || "No User");
       setUser(firebaseUser);
-      
+
       // Auto-grant Pro to the admin/test emails for testing/demo
       const isAuto = isAutoPro(email);
       if (isAuto) {
         console.log("App: Auto-Pro detected, forcing Pro status locally.");
         setIsPro(true);
       }
-      
+
       // Always clear previous profile listener on auth change
       if (unsubProfile) {
         unsubProfile();
@@ -745,8 +745,8 @@ export default function App() {
 
     setIsLoggingIn(true);
     try {
-      const provider = providerType === 'google' 
-        ? new GoogleAuthProvider() 
+      const provider = providerType === 'google'
+        ? new GoogleAuthProvider()
         : new OAuthProvider('apple.com');
 
       if (providerType === 'apple') {
@@ -769,7 +769,36 @@ export default function App() {
     }
   };
 
-  const handleSuccessfulPurchase = useCallback(async () => {
+  // --- IAP Initialization ---
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    console.log("App: Initializing Native IAP...");
+
+    if (!user) {
+      setHasNativeProPurchase(false);
+      return;
+    }
+
+    setHasNativeProPurchase(localStorage.getItem(nativeProStorageKey(user.uid)) === 'true');
+
+    const checkActivePurchases = async () => {
+      try {
+        const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
+        console.log("App: Active Purchases ->", purchases);
+        const hasPro = hasStoreProEntitlement(purchases);
+        if (hasPro) {
+          await handleSuccessfulPurchase();
+        }
+      } catch (error) {
+        console.error("App: Failed to check active purchases", error);
+      }
+    };
+
+    checkActivePurchases();
+  }, [user]);
+
+  const handleSuccessfulPurchase = async () => {
     if (!user) return;
     console.log("App: Handling successful purchase for user:", user.uid);
 
@@ -790,40 +819,11 @@ export default function App() {
     } catch (error) {
       console.error("App: Failed to sync Pro status to Firestore; keeping local store entitlement active.", error);
     }
-  }, [setNativeProAccess, user]);
-
-  // --- IAP Initialization ---
-  useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
-
-    console.log("App: Initializing Native IAP...");
-
-    if (!user) {
-      setHasNativeProPurchase(false);
-      return;
-    }
-
-    setHasNativeProPurchase(localStorage.getItem(nativeProStorageKey(user.uid)) === 'true');
-    
-    const checkActivePurchases = async () => {
-      try {
-        const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
-        console.log("App: Active Purchases ->", purchases);
-        const hasPro = hasStoreProEntitlement(purchases);
-        if (hasPro) {
-          await handleSuccessfulPurchase();
-        }
-      } catch (error) {
-        console.error("App: Failed to check active purchases", error);
-      }
-    };
-
-    checkActivePurchases();
-  }, [handleSuccessfulPurchase, user]);
+  };
 
   const handleRestorePurchases = async () => {
     if (!user) return;
-    
+
     setIsSyncing(true);
 
     if (Capacitor.isNativePlatform()) {
@@ -903,7 +903,7 @@ export default function App() {
 
   const handleDeleteAccount = async () => {
     if (!user) return;
-    
+
     setDeleteError(null);
     setIsDeletingAccount(true);
     try {
@@ -992,12 +992,12 @@ export default function App() {
           throw new Error(productUnavailableMessage(productIds));
         }
 
-        const transaction = await InAppPurchase.purchaseProduct({ 
+        const transaction = await InAppPurchase.purchaseProduct({
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
           ...nativePurchaseUserOptions(user.uid)
         }) as any;
-        
+
         if (transaction?.transactionId || transaction?.status === 'purchased') {
           console.log("App: Native Purchase success ->", transaction.transactionId);
           await handleSuccessfulPurchase();
@@ -1032,10 +1032,10 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.uid, email: user.email }),
       });
-      
+
       const { url, error } = await response.json();
       if (error) throw new Error(error);
-      
+
       // Open Stripe in a new tab to avoid iframe blocking
       if (url) {
         console.log("App: Redirecting to Stripe ->", url);
@@ -1073,7 +1073,7 @@ export default function App() {
     if (mode === AppMode.THREE_PHASE) {
       const p = parseFloat(loadKw) || 0;
       if (p <= 0) return null;
-      
+
       if (supplyType === SupplyType.THREE_PHASE) {
         // I = Power / (1.732 × 400 × 0.9)
         const current = (p * 1000) / (1.732 * 400 * 0.9);
@@ -1326,9 +1326,9 @@ Calculated via The Sparkys Mate
           borderRadius: '0',
         }
       });
-      
+
       await downloadFile(dataUrl, `bs7671-calc-${Date.now()}.png`, 'image/png');
-      
+
       // Show success state for a moment
       setTimeout(() => setIsSavingImage(false), 2000);
     } catch (err) {
@@ -1348,18 +1348,18 @@ Calculated via The Sparkys Mate
           borderRadius: '0',
         }
       });
-      
+
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'px',
         format: [400, 600] // Match the report size roughly
       });
-      
+
       pdf.addImage(dataUrl, 'PNG', 0, 0, 400, 600);
       const pdfDataUrl = pdf.output('datauristring');
-      
+
       await downloadFile(pdfDataUrl, `bs7671-report-${Date.now()}.pdf`, 'application/pdf');
-      
+
       setTimeout(() => setIsSavingPDF(false), 2000);
     } catch (err) {
       console.error('Error generating PDF:', err);
@@ -1420,14 +1420,14 @@ Calculated via The Sparkys Mate
       AppMode.PROTECTIVE_DEVICE_SELECTOR,
       AppMode.THREE_PHASE_MOTOR
     ];
-    
+
     if (proModes.includes(newMode) && !effectiveIsPro) {
       setShowUpgradeModal(true);
       return;
     }
     setMode(newMode);
     setShowResults(false);
-    
+
     // Update recent tools
     setRecentTools(prev => {
       const filtered = prev.filter(t => t !== newMode);
@@ -1436,7 +1436,7 @@ Calculated via The Sparkys Mate
   };
 
   const renderHome = () => (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="grid grid-cols-1 sm:grid-cols-2 gap-4"
@@ -1447,7 +1447,7 @@ Calculated via The Sparkys Mate
           <p className="text-gray-500 text-sm font-medium">Precision electrical engineering suite.</p>
         </div>
         {!effectiveIsPro && (
-          <button 
+          <button
             onClick={handleUpgrade}
             className="bg-emerald-500/10 text-emerald-500 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
           >
@@ -1464,7 +1464,7 @@ Calculated via The Sparkys Mate
             <CheckCircle2 className="text-emerald-500" size={18} />
             <h3 className="font-bold text-white">BS 7671 Compliance</h3>
           </div>
-          <button 
+          <button
             onClick={() => refreshRegulatoryInfo({ force: true })}
             disabled={isCheckingUpdates}
             className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors disabled:opacity-50"
@@ -1472,12 +1472,12 @@ Calculated via The Sparkys Mate
             {isCheckingUpdates ? 'Checking...' : 'Check for Updates'}
           </button>
         </div>
-        
+
         {!hasApiKey && (
           <div className="mb-4 p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl">
             <p className="text-[10px] text-orange-200 leading-relaxed">
               <span className="font-bold uppercase block mb-1">Billing Required</span>
-              Real-time regulatory checks require a Gemini API key with billing enabled. 
+              Real-time regulatory checks require a Gemini API key with billing enabled.
               <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="underline ml-1">Learn more</a>
             </p>
           </div>
@@ -1573,7 +1573,7 @@ Calculated via The Sparkys Mate
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-emerald-500 transition-colors" />
       </button>
 
-      <button 
+      <button
         onClick={() => handleModeChange(AppMode.THREE_PHASE)}
         className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
@@ -1587,7 +1587,7 @@ Calculated via The Sparkys Mate
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-purple-500 transition-colors" />
       </button>
 
-      <button 
+      <button
         onClick={() => handleModeChange(AppMode.CABLE_FINDER)}
         className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
@@ -1601,7 +1601,7 @@ Calculated via The Sparkys Mate
         <ChevronRight className="ml-auto text-gray-700 group-hover:text-purple-500 transition-colors" />
       </button>
 
-      <button 
+      <button
         onClick={() => handleModeChange(AppMode.HISTORY)}
         className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98]"
       >
@@ -1620,7 +1620,7 @@ Calculated via The Sparkys Mate
         <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-1 ml-1">Pro Features</p>
       </div>
 
-      <button 
+      <button
         onClick={() => handleModeChange(AppMode.SMART_CIRCUIT)}
         className="sm:col-span-2 bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border flex items-center gap-4 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
       >
@@ -1771,7 +1771,7 @@ Calculated via The Sparkys Mate
       </div>
 
       {!effectiveIsPro && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="sm:col-span-2 p-6 sm:p-8 bg-emerald-500 rounded-[32px] text-black relative overflow-hidden group cursor-pointer mt-4"
@@ -1783,7 +1783,7 @@ Calculated via The Sparkys Mate
           <div className="relative z-10">
             <h3 className="text-3xl font-black mb-2 uppercase tracking-tighter">1 Month Free Trial</h3>
             <p className="font-bold text-black/70 mb-6 max-w-md">Try the full BS 7671 engineering suite for free. No commitment, cancel anytime. Just £5.99/mo after trial.</p>
-            <button 
+            <button
               onClick={(e) => {
                 e.stopPropagation();
                 handleUpgrade();
@@ -1815,7 +1815,7 @@ Calculated via The Sparkys Mate
             <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest animate-pulse mb-2">
               {isSyncing ? "Syncing Subscription..." : "Initializing Suite..."}
             </p>
-            <p className="text-gray-700 text-[8px] uppercase tracking-widest">The Sparkys Mate v1.0.10</p>
+            <p className="text-gray-700 text-[8px] uppercase tracking-widest">The Sparkys Mate v1.0.12</p>
           </div>
         </div>
       </div>
@@ -1859,9 +1859,9 @@ Calculated via The Sparkys Mate
                   )}
                 </button>
               ) : (
-                <button 
-                  id="login-button-main" 
-                  onClick={() => setShowLoginModal(true)} 
+                <button
+                  id="login-button-main"
+                  onClick={() => setShowLoginModal(true)}
                   className="bg-emerald-500 text-black px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-emerald-400 transition-colors flex items-center gap-2"
                 >
                   <LogIn size={12} />
@@ -1879,7 +1879,7 @@ Calculated via The Sparkys Mate
       )}
 
       {cleanMode && (
-        <button 
+        <button
           onClick={() => setCleanMode(false)}
           className="fixed top-4 right-4 z-[100] bg-white/10 hover:bg-white/20 p-3 rounded-full backdrop-blur-md border border-white/10 text-white/50 hover:text-white transition-all shadow-2xl"
           title="Exit Clean Mode"
@@ -2084,7 +2084,7 @@ Calculated via The Sparkys Mate
                 </button>
                 <h2 className="text-xl font-bold flex-1">Privacy Policy</h2>
               </div>
-              
+
               <div className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border space-y-5 text-sm text-gray-400 leading-relaxed">
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
                   Last updated: 15 June 2026
@@ -2269,7 +2269,7 @@ Calculated via The Sparkys Mate
                 </button>
                 <h2 className="text-xl font-bold flex-1">Account Deletion</h2>
               </div>
-              
+
               <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border space-y-6">
                 <div className="flex items-center gap-4 text-orange-500">
                   <AlertTriangle size={32} />
@@ -2291,7 +2291,7 @@ Calculated via The Sparkys Mate
                 </div>
 
                 {user ? (
-                  <button 
+                  <button
                     onClick={() => setShowSettingsModal(true)}
                     className="w-full bg-red-500/10 text-red-500 py-4 rounded-2xl font-bold uppercase tracking-widest text-[10px] border border-red-500/20 hover:bg-red-500/20 transition-all"
                   >
@@ -2319,7 +2319,7 @@ Calculated via The Sparkys Mate
                 </button>
                 <h2 className="text-xl font-bold flex-1">Support & Contact</h2>
               </div>
-              
+
               <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border space-y-6">
                 <div className="flex items-center gap-4 text-emerald-500">
                   <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
@@ -2330,7 +2330,7 @@ Calculated via The Sparkys Mate
                     <p className="text-[10px] text-gray-500 uppercase tracking-wider">Fast response for Pro users</p>
                   </div>
                 </div>
-                
+
                 <div className="space-y-4 text-sm text-gray-400 leading-relaxed">
                   <p>
                     Need help with a calculation, found a bug, or have a feature request? We're here to help.
@@ -2340,7 +2340,7 @@ Calculated via The Sparkys Mate
                   </p>
                 </div>
 
-                <a 
+                <a
                   href={SUPPORT_EMAIL}
                   className="w-full bg-emerald-500 text-black py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"
                 >
@@ -2372,12 +2372,12 @@ Calculated via The Sparkys Mate
                     {mode === AppMode.CABLE_FINDER && 'Cable Size Finder'}
                   </h2>
                   {!showResults && (
-                    <button 
+                    <button
                       onClick={() => {
                         setLoadKw('');
                         setLengthM('');
                         setTargetCurrent('');
-                      }} 
+                      }}
                       className="text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-red-500 transition-colors"
                     >
                       Reset
@@ -2538,7 +2538,7 @@ Calculated via The Sparkys Mate
                     <div>
                       <div className="flex items-center justify-between mb-3 ml-1">
                         <span className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest">Installation Method</span>
-                        <button 
+                        <button
                           onClick={() => setShowMethodInfo(true)}
                           className="text-emerald-500 p-1 hover:bg-emerald-500/10 rounded-full transition-colors"
                         >
@@ -2551,8 +2551,8 @@ Calculated via The Sparkys Mate
                             key={m}
                             onClick={() => setMethod(m)}
                             className={`w-full min-w-0 py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border flex items-start justify-between gap-3 ${
-                              method === m 
-                                ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
+                              method === m
+                                ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20'
                                 : 'bg-hardware-card text-gray-400 border-hardware-border hover:border-white/20'
                             }`}
                           >
@@ -2600,7 +2600,7 @@ Calculated via The Sparkys Mate
                     <div className="space-y-4">
                       {/* Share Button */}
                       <div className="flex justify-end">
-                        <button 
+                        <button
                           onClick={() => setShowShareMenu(true)}
                           className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-500 hover:bg-emerald-500/10 px-4 py-2 rounded-full transition-colors"
                         >
@@ -2647,7 +2647,7 @@ Calculated via The Sparkys Mate
                             </div>
                           </div>
                           <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                            <motion.div 
+                            <motion.div
                               initial={{ width: 0 }}
                               animate={{ width: `${Math.min((result.voltageDropPercentage / result.limitPercentage) * 100, 100)}%` }}
                               className={`h-full ${result.isCompliant ? 'bg-emerald-500' : 'bg-red-500'}`}
@@ -2673,7 +2673,7 @@ Calculated via The Sparkys Mate
                               </div>
                             </div>
                             <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                              <motion.div 
+                              <motion.div
                                 initial={{ width: 0 }}
                                 animate={{ width: `${Math.min((result.zs / (result.maxZs || 1)) * 100, 100)}%` }}
                                 className={`h-full ${result.zsCompliant ? 'bg-emerald-500' : 'bg-red-500'}`}
@@ -2690,13 +2690,13 @@ Calculated via The Sparkys Mate
                   )}
 
                   <div className="flex gap-4">
-                    <button 
+                    <button
                       onClick={() => setShowResults(false)}
                       className="flex-1 bg-white/5 border border-white/10 py-5 rounded-3xl font-bold text-gray-400 hover:bg-white/10 transition-colors"
                     >
                       Edit
                     </button>
-                    <button 
+                    <button
                       onClick={handleSaveHistory}
                       disabled={isSavingHistory}
                       className={saveHistoryButtonClass}
@@ -2770,7 +2770,7 @@ Calculated via The Sparkys Mate
               </div>
 
               <div className="grid grid-cols-3 gap-3">
-                <button 
+                <button
                   onClick={handleNativeShareText}
                   className="flex flex-col items-center gap-3 p-4 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group"
                 >
@@ -2780,7 +2780,7 @@ Calculated via The Sparkys Mate
                   <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Share</span>
                 </button>
 
-                <button 
+                <button
                   onClick={handleCopySharedText}
                   className="flex flex-col items-center gap-3 p-4 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group"
                 >
@@ -2792,7 +2792,7 @@ Calculated via The Sparkys Mate
                   </span>
                 </button>
 
-                <button 
+                <button
                   onClick={handleDownloadSharedTextPDF}
                   disabled={isSavingTextPDF}
                   className="flex flex-col items-center gap-3 p-4 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
@@ -2831,7 +2831,7 @@ Calculated via The Sparkys Mate
               </div>
 
               <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                <button 
+                <button
                   onClick={handleShareText}
                   className="flex flex-col items-center gap-2 p-3 sm:p-4 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-colors group"
                 >
@@ -2843,7 +2843,7 @@ Calculated via The Sparkys Mate
                   </span>
                 </button>
 
-                <button 
+                <button
                   onClick={handleDownloadImage}
                   disabled={isSavingImage}
                   className="flex flex-col items-center gap-2 p-3 sm:p-4 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
@@ -2856,7 +2856,7 @@ Calculated via The Sparkys Mate
                   </span>
                 </button>
 
-                <button 
+                <button
                   onClick={handleDownloadPDF}
                   disabled={isSavingPDF}
                   className="flex flex-col items-center gap-2 p-3 sm:p-4 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-colors group disabled:opacity-50"
@@ -2924,7 +2924,7 @@ Calculated via The Sparkys Mate
                         </span>
                       </div>
                     </div>
-                    
+
                     <div className="mt-8 pt-4 border-t border-white/10 flex justify-between items-center">
                       <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">
                         {new Date().toLocaleDateString()}
@@ -3005,7 +3005,7 @@ Calculated via The Sparkys Mate
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="mt-12 pt-6 border-t border-gray-100 flex justify-between items-center text-gray-400">
                     <span className="text-[10px] font-bold uppercase tracking-widest">
                       Report Date: {new Date().toLocaleDateString()}
@@ -3023,14 +3023,14 @@ Calculated via The Sparkys Mate
       <AnimatePresence>
         {showMethodInfo && (
           <div className="safe-modal-shell fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowMethodInfo(false)}
               className="absolute inset-0 bg-black/80 backdrop-blur-sm"
             />
-            <motion.div 
+            <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -3068,7 +3068,7 @@ Calculated via The Sparkys Mate
                   <p className="text-gray-400">Specific methods for cables in contact with thermal insulation (lofts, etc).</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => setShowMethodInfo(false)}
                 className="w-full mt-8 bg-emerald-500 text-white py-4 rounded-2xl font-bold"
               >
@@ -3119,7 +3119,7 @@ Calculated via The Sparkys Mate
 
                 <div className="space-y-2">
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Display Options</p>
-                  <button 
+                  <button
                     onClick={() => {
                       setCleanMode(true);
                       setShowSettingsModal(false);
@@ -3134,7 +3134,7 @@ Calculated via The Sparkys Mate
                   </button>
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1 mt-4">Developer Controls</p>
                   {!hasApiKey && (
-                    <button 
+                    <button
                       onClick={handleSelectKey}
                       className="w-full p-4 bg-orange-500/10 hover:bg-orange-500/20 rounded-2xl text-left flex items-center justify-between transition-colors group border border-orange-500/20"
                     >
@@ -3143,7 +3143,7 @@ Calculated via The Sparkys Mate
                     </button>
                   )}
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1 mt-4">Legal & Support</p>
-                  <button 
+                  <button
                     onClick={() => {
                       setMode(AppMode.PRIVACY);
                       setShowSettingsModal(false);
@@ -3153,14 +3153,14 @@ Calculated via The Sparkys Mate
                     <span className="text-sm font-medium">Privacy Policy (In-App)</span>
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
-                  <button 
+                  <button
                     onClick={() => void openExternalUrl(PRIVACY_POLICY_URL)}
                     className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group"
                   >
                     <span className="text-sm font-medium">Privacy Policy (External)</span>
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
-                  <button 
+                  <button
                     onClick={() => {
                       setMode(AppMode.ACCOUNT_DELETION);
                       setShowSettingsModal(false);
@@ -3170,7 +3170,7 @@ Calculated via The Sparkys Mate
                     <span className="text-sm font-medium">Account Deletion Info</span>
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
-                  <button 
+                  <button
                     onClick={() => {
                       setMode(AppMode.TERMS);
                       setShowSettingsModal(false);
@@ -3180,7 +3180,7 @@ Calculated via The Sparkys Mate
                     <span className="text-sm font-medium">Terms of Service</span>
                     <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
                   </button>
-                  <button 
+                  <button
                     onClick={() => {
                       setMode(AppMode.SUPPORT);
                       setShowSettingsModal(false);
@@ -3194,7 +3194,7 @@ Calculated via The Sparkys Mate
 
                 <div className="space-y-2">
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Account Actions</p>
-                  <button 
+                  <button
                     id="logout-button"
                     onClick={() => {
                       handleLogout();
@@ -3205,9 +3205,9 @@ Calculated via The Sparkys Mate
                     <LogOut size={18} className="text-gray-400" />
                     <span className="text-sm font-medium">Log Out</span>
                   </button>
-                  
+
                   {!showDeleteConfirm ? (
-                    <button 
+                    <button
                       id="delete-account-trigger"
                       onClick={() => {
                         setDeletePassword('');
@@ -3258,7 +3258,7 @@ Calculated via The Sparkys Mate
                         </p>
                       )}
                       <div className="flex gap-2">
-                        <button 
+                        <button
                           id="confirm-delete-button"
                           onClick={handleDeleteAccount}
                           disabled={isDeletingAccount || deleteSuccess || (deletionProvider === 'password' && !deletePassword)}
@@ -3266,7 +3266,7 @@ Calculated via The Sparkys Mate
                         >
                           {isDeletingAccount ? "Verifying..." : "Verify & Delete"}
                         </button>
-                        <button 
+                        <button
                           id="cancel-delete-button"
                           onClick={() => {
                             setShowDeleteConfirm(false);
@@ -3294,7 +3294,7 @@ Calculated via The Sparkys Mate
             panelClassName="border-emerald-500/30 p-5 sm:p-7"
           >
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent" />
-              
+
               <div className="flex justify-center mb-4 sm:mb-6">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-500/10 rounded-2xl sm:rounded-3xl flex items-center justify-center text-emerald-500 hardware-glow">
                   <Crown size={36} />
@@ -3336,7 +3336,7 @@ Calculated via The Sparkys Mate
                 </div>
               </div>
 
-              <button 
+              <button
                 onClick={handleUpgrade}
                 disabled={isUpgrading}
                 className="w-full min-h-14 bg-emerald-500 text-black px-4 py-4 rounded-2xl font-black uppercase tracking-wider text-[11px] sm:text-xs leading-tight text-center hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -3350,9 +3350,9 @@ Calculated via The Sparkys Mate
                   'Start 1 Month Free Trial'
                 )}
               </button>
-              
+
               <div className="flex flex-col items-center gap-4 mt-6">
-                <button 
+                <button
                   onClick={handleRestorePurchases}
                   className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors"
                 >
@@ -3360,7 +3360,7 @@ Calculated via The Sparkys Mate
                 </button>
 
                 <div className="flex items-center gap-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setShowUpgradeModal(false);
                       setMode(AppMode.PRIVACY);
@@ -3370,7 +3370,7 @@ Calculated via The Sparkys Mate
                     Privacy Policy
                   </button>
                   <div className="w-1 h-1 bg-white/10 rounded-full" />
-                  <button 
+                  <button
                     onClick={() => {
                       setShowUpgradeModal(false);
                       setMode(AppMode.TERMS);
@@ -3380,14 +3380,14 @@ Calculated via The Sparkys Mate
                     Terms of Use
                   </button>
                 </div>
-                
+
                 <p className="text-[8px] text-gray-600 text-center leading-relaxed max-w-[280px]">
                   Payment of £5.99/mo will be charged to your account after the 1 month free trial.
                   Subscription automatically renews unless auto-renew is turned off at least 24-hours before the end of the current period.
                   Manage your subscription in your Account Settings.
                 </p>
 
-                <button 
+                <button
                   onClick={() => setShowUpgradeModal(false)}
                   className="py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors"
                 >
@@ -3399,14 +3399,14 @@ Calculated via The Sparkys Mate
 
         {showLoginModal && (
           <div className="safe-modal-shell fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowLoginModal(false)}
               className="absolute inset-0 bg-black/90 backdrop-blur-md"
             />
-            <motion.div 
+            <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -3422,7 +3422,7 @@ Calculated via The Sparkys Mate
               <div className="space-y-4">
                 {/* Social Logins */}
                 <div className="grid grid-cols-2 gap-3">
-                  <button 
+                  <button
                     onClick={() => handleLogin('google')}
                     className="flex items-center justify-center gap-2 py-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/10 transition-all group"
                   >
@@ -3431,7 +3431,7 @@ Calculated via The Sparkys Mate
                     </div>
                     <span className="text-[10px] font-bold uppercase tracking-widest">Google</span>
                   </button>
-                  <button 
+                  <button
                     onClick={() => handleLogin('apple')}
                     className="flex items-center justify-center gap-2 py-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/10 transition-all group"
                   >
@@ -3457,7 +3457,7 @@ Calculated via The Sparkys Mate
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Email Address</label>
                     <div className="relative">
                       <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-                      <input 
+                      <input
                         type="email"
                         value={loginEmail}
                         onChange={(e) => setLoginEmail(e.target.value)}
@@ -3471,14 +3471,14 @@ Calculated via The Sparkys Mate
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Password</label>
                     <div className="relative">
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-                      <input 
+                      <input
                         type={showPassword ? "text" : "password"}
                         value={loginPassword}
                         onChange={(e) => setLoginPassword(e.target.value)}
                         placeholder="••••••••"
                         className="w-full bg-black/40 border border-hardware-border rounded-2xl pl-12 pr-12 py-4 text-white font-bold focus:border-emerald-500/50 transition-colors outline-none"
                       />
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
                         className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
@@ -3497,7 +3497,7 @@ Calculated via The Sparkys Mate
                     </div>
                   )}
 
-                  <button 
+                  <button
                     onClick={() => handleLogin('email')}
                     disabled={isLoggingIn}
                     className="w-full bg-emerald-500 text-black py-5 rounded-3xl font-black uppercase tracking-widest hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
@@ -3512,7 +3512,7 @@ Calculated via The Sparkys Mate
                     )}
                   </button>
 
-                  <button 
+                  <button
                     onClick={() => setIsSignUp(!isSignUp)}
                     className="py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors w-full text-center"
                   >

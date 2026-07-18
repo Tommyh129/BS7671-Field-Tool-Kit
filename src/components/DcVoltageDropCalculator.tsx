@@ -274,7 +274,7 @@ export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalcul
     ).catch(error => {
       console.error('Error auto-saving DC voltage drop history:', error);
     });
-  }, [calculation, cableSize, material, voltageType, customVoltage, loadCurrent, cableLength, maxDropType, customMaxDrop, systemVoltage, maxDropPercent, unitResistance]);
+  }, [calculation, cableSize, material, voltageType, customVoltage, loadCurrent, cableLength, maxDropType, customMaxDrop]);
 
   // Share calculation summary text
   const handleShare = () => {

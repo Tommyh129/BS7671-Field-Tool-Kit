@@ -20,7 +20,15 @@ export function getApiBaseUrl() {
       if (origin && origin !== 'null') {
         return origin;
       }
-      return ''; // Fallback to relative path so browser resolves it against the document URL
+      try {
+        const parsedOrigin = new URL(window.location.href).origin;
+        if (parsedOrigin && parsedOrigin !== 'null') {
+          return parsedOrigin;
+        }
+      } catch (e) {
+        // ignore
+      }
+      return getFallbackBaseUrl();
     }
   }
 

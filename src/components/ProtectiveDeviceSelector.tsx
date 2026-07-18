@@ -182,7 +182,7 @@ export default function ProtectiveDeviceSelector({ onShare }: ProtectiveDeviceSe
     saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
       console.error('Error auto-saving protection selector history:', error);
     });
-  }, [designCurrent, activeRating, activeDeviceType, maxZs100, maxZs80, inputMode, loadAmps, loadKw, supplyType, powerFactor, circuitType, deviceTypeOverride, ratingOverride, deviceInfo]);
+  }, [designCurrent, activeRating, activeDeviceType, maxZs100, maxZs80]);
 
   const handleShare = () => {
     const text = `

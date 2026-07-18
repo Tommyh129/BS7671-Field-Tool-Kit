@@ -109,7 +109,7 @@ export function calculateCircuit(
   let finalVd = getVd(finalCable);
   let finalVdPercent = getVdPercent(finalVd);
   let finalZs = getZs(finalCable);
-  
+
   let vdCompliant = finalVdPercent <= limitPercentage;
   let zsCompliant = finalZs <= maxZs;
   let finalIsCompliant = vdCompliant && zsCompliant;
@@ -121,7 +121,7 @@ export function calculateCircuit(
       const nextVd = getVd(nextCable);
       const nextVdPercent = getVdPercent(nextVd);
       const nextZs = getZs(nextCable);
-      
+
       return nextVdPercent <= limitPercentage && nextZs <= maxZs;
     });
 
