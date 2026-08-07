@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const root = process.cwd();
 const packageRoot = path.join(root, 'node_modules', 'capacitor-plugin-purchase');
+const buildGradlePath = path.join(packageRoot, 'android', 'build.gradle');
 const implementationPath = path.join(packageRoot, 'android', 'src', 'main', 'java', 'com', 'scgscorp', 'capacitorpluginpurchase', 'InAppPurchase.kt');
 const pluginPath = path.join(packageRoot, 'android', 'src', 'main', 'java', 'com', 'scgscorp', 'capacitorpluginpurchase', 'InAppPurchasePlugin.kt');
 
@@ -20,6 +21,26 @@ function replaceRequired(content, search, replacement, label) {
     throw new Error(`Could not patch ${label}. Expected source fragment was not found.`);
   }
   return content.replace(search, replacement);
+}
+
+function replaceRequiredAny(content, searchFragments, replacement, label) {
+  if (content.includes(replacement)) {
+    return content;
+  }
+  for (const search of searchFragments) {
+    if (content.includes(search)) {
+      return content.replace(search, replacement);
+    }
+  }
+  throw new Error(`Could not patch ${label}. Expected source fragment was not found.`);
+}
+
+function replaceBillingVersion(content, version) {
+  const billingVersionPattern = /billingVersion\s*=\s*['"][^'"]+['"]/;
+  if (!billingVersionPattern.test(content)) {
+    throw new Error('Could not patch Android Play Billing version. billingVersion was not found.');
+  }
+  return content.replace(billingVersionPattern, `billingVersion = '${version}'`);
 }
 
 function replaceBetween(content, start, end, replacement, label) {
@@ -41,10 +62,36 @@ function writeIfChanged(filePath, content) {
   }
 }
 
+requireFile(buildGradlePath);
 requireFile(implementationPath);
 requireFile(pluginPath);
 
+let buildGradle = fs.readFileSync(buildGradlePath, 'utf8');
+buildGradle = replaceBillingVersion(buildGradle, '9.0.0');
+writeIfChanged(buildGradlePath, buildGradle);
+
 let implementation = fs.readFileSync(implementationPath, 'utf8');
+
+implementation = replaceRequired(
+  implementation,
+  '// Updated for Google Play Billing Library 7.1.1\n',
+  '// Updated for Google Play Billing Library 9.0.0\n',
+  'Android Play Billing Library comment'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `            .enablePendingPurchases() // Required for pending transactions
+`,
+  `            .enablePendingPurchases(
+                PendingPurchasesParams.newBuilder()
+                    .enableOneTimeProducts()
+                    .build()
+            )
+            .enableAutoServiceReconnection()
+`,
+  'Android Billing 9 pending purchase setup'
+);
 
 implementation = replaceRequired(
   implementation,
@@ -106,6 +153,65 @@ implementation = replaceRequired(
   'Android product query log'
 );
 
+implementation = replaceRequiredAny(
+  implementation,
+  [
+    `                billingClient.queryProductDetailsAsync(params) { billingResult, fetchedProductDetailsList ->
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && fetchedProductDetailsList != null) {
+                        Log.i(TAG, "Successfully fetched \${fetchedProductDetailsList.size} product details.")
+                        // Filter results by type if you queried multiple types
+                        this.productDetailsList = fetchedProductDetailsList
+                            .filter { it.productType == BillingClient.ProductType.INAPP } // Keep only INAPP for this example
+                            .toMutableList()
+                        // Store SUBS details separately if needed
+                        callback(this.productDetailsList) // Return only the relevant (INAPP) products
+                    } else {
+                        Log.e(TAG, "Failed to query product details: \${billingResult.debugMessage} (Code: \${billingResult.responseCode})")
+                        this.productDetailsList.clear() // Clear cache on failure
+                        callback(emptyList())
+                    }
+                }
+`,
+    `                billingClient.queryProductDetailsAsync(params) { billingResult, fetchedProductDetailsList ->
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && fetchedProductDetailsList != null) {
+                        Log.i(TAG, "Successfully fetched \${fetchedProductDetailsList.size} product details.")
+                        // Filter results by type if you queried multiple types
+                        this.productDetailsList = fetchedProductDetailsList
+                            .filter { it.productType == billingProductType }
+                            .toMutableList()
+                        callback(this.productDetailsList)
+                    } else {
+                        Log.e(TAG, "Failed to query product details: \${billingResult.debugMessage} (Code: \${billingResult.responseCode})")
+                        this.productDetailsList.clear() // Clear cache on failure
+                        callback(emptyList())
+                    }
+                }
+`
+  ],
+  `                billingClient.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
+                    val fetchedProductDetailsList = queryProductDetailsResult.productDetailsList
+                    val unfetchedProducts = queryProductDetailsResult.unfetchedProductList
+
+                    if (unfetchedProducts.isNotEmpty()) {
+                        Log.w(TAG, "Billing did not return \${unfetchedProducts.size} product details for IDs: $productIds")
+                    }
+
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                        Log.i(TAG, "Successfully fetched \${fetchedProductDetailsList.size} product details.")
+                        this.productDetailsList = fetchedProductDetailsList
+                            .filter { it.productType == billingProductType }
+                            .toMutableList()
+                        callback(this.productDetailsList)
+                    } else {
+                        Log.e(TAG, "Failed to query product details: \${billingResult.debugMessage} (Code: \${billingResult.responseCode})")
+                        this.productDetailsList.clear()
+                        callback(emptyList())
+                    }
+                }
+`,
+  'Android Billing 9 product details callback'
+);
+
 implementation = replaceRequired(
   implementation,
   `                        this.productDetailsList = fetchedProductDetailsList
@@ -142,6 +248,20 @@ implementation = replaceRequired(
                  val productDetailsParamsList = listOf(productDetailsParamsBuilder.build())
 `,
   'Android subscription offer token'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 // --- PBL 7 Compatibility Note ---
+                 // The use of ProductDetailsParams is the standard way since PBL 5 and remains correct for PBL 7.
+                 // For subscription updates/downgrades (not shown here), the setSubscriptionReplacementMode would be used
+                 // instead of the removed setReplaceProrationMode.
+`,
+  `                 // --- PBL 9 Compatibility Note ---
+                 // ProductDetailsParams remains the standard billing-flow API for PBL 9.
+                 // For subscription updates/downgrades (not shown here), setSubscriptionReplacementMode is used.
+`,
+  'Android Billing compatibility comment'
 );
 
 implementation = replaceRequired(
@@ -282,4 +402,4 @@ plugin = replaceRequired(
 
 writeIfChanged(pluginPath, plugin);
 
-console.log('Patched capacitor-plugin-purchase Android subscription support.');
+console.log('Patched capacitor-plugin-purchase Android subscription and Play Billing 9.0.0 support.');

@@ -3,6 +3,7 @@ build/
 dist/
 coverage/
 android/.gradle-cache/
+android/.idea/
 .DS_Store
 *.log
 .env*
