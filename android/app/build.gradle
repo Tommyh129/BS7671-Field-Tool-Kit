@@ -3,6 +3,9 @@ apply plugin: 'com.android.application'
 android {
     namespace = "com.bs7671.fieldtoolkit"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "com.bs7671.fieldtoolkit"
         minSdkVersion rootProject.ext.minSdkVersion

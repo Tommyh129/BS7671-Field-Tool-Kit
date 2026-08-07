@@ -68,6 +68,22 @@ requireFile(pluginPath);
 
 let buildGradle = fs.readFileSync(buildGradlePath, 'utf8');
 buildGradle = replaceBillingVersion(buildGradle, '9.0.0');
+buildGradle = buildGradle.replaceAll(
+  "getDefaultProguardFile('proguard-android.txt')",
+  "getDefaultProguardFile('proguard-android-optimize.txt')"
+);
+buildGradle = replaceRequired(
+  buildGradle,
+  `apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+`,
+  `apply plugin: 'com.android.library'
+if (extensions.findByName('kotlin') == null) {
+    apply plugin: 'kotlin-android'
+}
+`,
+  'Android purchase Kotlin plugin duplicate guard'
+);
 writeIfChanged(buildGradlePath, buildGradle);
 
 let implementation = fs.readFileSync(implementationPath, 'utf8');
