@@ -124,7 +124,7 @@ function ensureXcodeProject() {
     throw new Error('Failed to add GoogleService-Info.plist build reference.');
   }
 
-  const resourcesBlock = pbx.match(/(\/\* Resources \*\/ = \{\s+isa = PBXResourcesBuildPhase;[\s\S]*?files = \(\n)([\s\S]*?)(\n\s+\);\s+runOnlyForDeploymentPostprocessing = 0;)/);
+  const resourcesBlock = pbx.match(/(\/\* Resources \*\/ = \{\s+isa = PBXResourcesBuildPhase;[\s\S]*?files = \(\r?\n)([\s\S]*?)(\r?\n\s+\);\s+runOnlyForDeploymentPostprocessing = 0;)/);
   if (!resourcesBlock) {
     throw new Error('Could not find Xcode Resources build phase.');
   }

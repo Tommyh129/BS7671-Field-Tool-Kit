@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build --configLoader runner",
+    "build:server": "esbuild ./server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build:full": "npm run build && npm run build:server",
     "start": "node dist/server.cjs",
-    "assets:generate": "capacitor-assets generate",
+    "assets:generate": "capacitor-assets generate && node scripts/fix-pwa-manifest-icon-types.mjs",
     "postinstall": "node scripts/patch-android-gradle-compat.mjs && node scripts/patch-purchase-android-subscriptions.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
