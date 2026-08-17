@@ -28,7 +28,6 @@ import {
   Star,
   LogOut,
   LogIn,
-  Apple,
   User as UserIcon,
   FileText,
   History as HistoryIcon,
@@ -228,11 +227,23 @@ const hasStoreProEntitlement = (purchases: StorePurchaseLike[]) => {
   return activeProductIds.length > 0;
 };
 
+const nativeProDeviceStorageKey = 'bs7671_native_pro_device';
 const nativeProStorageKey = (uid: string) => `bs7671_native_pro_${uid}`;
-const nativePurchaseUserOptions = (uid: string) => {
+const hasStoredNativeProAccess = (uid?: string | null) => {
+  if (localStorage.getItem(nativeProDeviceStorageKey) === 'true') {
+    return true;
+  }
+
+  return Boolean(uid && localStorage.getItem(nativeProStorageKey(uid)) === 'true');
+};
+const nativePurchaseUserOptions = (uid?: string | null) => {
   // StoreKit appAccountToken must be a UUID. Firebase UIDs are not UUIDs, so
   // filtering iOS restores by Firebase UID can hide valid Apple subscriptions.
-  return Capacitor.getPlatform() === 'ios' ? {} : { userId: uid };
+  if (Capacitor.getPlatform() === 'ios' || !uid) {
+    return {};
+  }
+
+  return { userId: uid };
 };
 
 const productUnavailableMessage = (productIds: string[]) => {
@@ -390,13 +401,18 @@ export default function App() {
     }
   };
 
-  const setNativeProAccess = (uid: string, hasAccess: boolean) => {
+  const setNativeProAccess = (uid: string | null | undefined, hasAccess: boolean) => {
     setHasNativeProPurchase(hasAccess);
-    const storageKey = nativeProStorageKey(uid);
     if (hasAccess) {
-      localStorage.setItem(storageKey, 'true');
+      localStorage.setItem(nativeProDeviceStorageKey, 'true');
+      if (uid) {
+        localStorage.setItem(nativeProStorageKey(uid), 'true');
+      }
     } else {
-      localStorage.removeItem(storageKey);
+      localStorage.removeItem(nativeProDeviceStorageKey);
+      if (uid) {
+        localStorage.removeItem(nativeProStorageKey(uid));
+      }
     }
   };
 
@@ -583,12 +599,14 @@ export default function App() {
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       const email = firebaseUser?.email?.toLowerCase().trim() || "";
+      const hasLocalNativePro = hasStoredNativeProAccess(firebaseUser?.uid);
       console.log("App: Auth State Changed ->", email || "No User");
       setUser(firebaseUser);
+      setHasNativeProPurchase(hasLocalNativePro);
 
       // Auto-grant Pro to the admin/test emails for testing/demo
       const isAuto = isAutoPro(email);
-      if (isAuto) {
+      if (isAuto || hasLocalNativePro) {
         console.log("App: Auto-Pro detected, forcing Pro status locally.");
         setIsPro(true);
       }
@@ -608,13 +626,13 @@ export default function App() {
             await setDoc(userDocRef, {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
-              isPro: isAuto, // Auto-pro for admin/test
+              isPro: isAuto || hasLocalNativePro, // Auto-pro for admin/test and locally purchased native Pro
               displayName: firebaseUser.displayName || '',
               photoURL: firebaseUser.photoURL || '',
               createdAt: new Date().toISOString()
             });
-          } else if (isAuto && !userDoc.data()?.isPro) {
-            // Update existing admin/test doc to be Pro if it isn't
+          } else if ((isAuto || hasLocalNativePro) && !userDoc.data()?.isPro) {
+            // Update existing admin/test or locally purchased native Pro account.
             console.log("App: Updating existing profile to Pro...");
             await updateDoc(userDocRef, { isPro: true });
           }
@@ -622,7 +640,7 @@ export default function App() {
           unsubProfile = onSnapshot(userDocRef, (doc) => {
             if (doc.exists()) {
               const data = doc.data() as UserProfile;
-              const proStatus = data.isPro || isAuto;
+              const proStatus = data.isPro || isAuto || hasStoredNativeProAccess(firebaseUser.uid);
               console.log("App: Profile updated ->", proStatus ? "PRO" : "FREE", "Email:", data.email);
               setProfile(data);
               setIsPro(proStatus);
@@ -640,6 +658,7 @@ export default function App() {
       } else {
         setProfile(null);
         setIsPro(false);
+        setHasNativeProPurchase(hasStoredNativeProAccess());
         setIsAuthLoading(false);
       }
     }, (error) => {
@@ -774,17 +793,11 @@ export default function App() {
     if (!Capacitor.isNativePlatform()) return;
 
     console.log("App: Initializing Native IAP...");
-
-    if (!user) {
-      setHasNativeProPurchase(false);
-      return;
-    }
-
-    setHasNativeProPurchase(localStorage.getItem(nativeProStorageKey(user.uid)) === 'true');
+    setHasNativeProPurchase(hasStoredNativeProAccess(user?.uid));
 
     const checkActivePurchases = async () => {
       try {
-        const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
+        const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
         console.log("App: Active Purchases ->", purchases);
         const hasPro = hasStoreProEntitlement(purchases);
         if (hasPro) {
@@ -799,21 +812,25 @@ export default function App() {
   }, [user]);
 
   const handleSuccessfulPurchase = async () => {
-    if (!user) return;
-    console.log("App: Handling successful purchase for user:", user.uid);
+    const activeUser = auth.currentUser || user;
+    console.log("App: Handling successful purchase for:", activeUser?.uid || "device-only");
 
-    setNativeProAccess(user.uid, true);
+    setNativeProAccess(activeUser?.uid, true);
     setIsPro(true);
     setShowUpgradeModal(false);
 
+    if (!activeUser) {
+      return;
+    }
+
     try {
-      const userDocRef = doc(db, 'users', user.uid);
+      const userDocRef = doc(db, 'users', activeUser.uid);
       await setDoc(userDocRef, {
-        uid: user.uid,
-        email: user.email || '',
+        uid: activeUser.uid,
+        email: activeUser.email || '',
         isPro: true,
-        displayName: user.displayName || '',
-        photoURL: user.photoURL || '',
+        displayName: activeUser.displayName || '',
+        photoURL: activeUser.photoURL || '',
         updatedAt: new Date().toISOString()
       }, { merge: true });
     } catch (error) {
@@ -822,14 +839,12 @@ export default function App() {
   };
 
   const handleRestorePurchases = async () => {
-    if (!user) return;
-
     setIsSyncing(true);
 
     if (Capacitor.isNativePlatform()) {
       try {
         console.log("App: Restoring Native Purchases...");
-        const { purchases } = await InAppPurchase.restorePurchases(nativePurchaseUserOptions(user.uid));
+        const { purchases } = await InAppPurchase.restorePurchases(nativePurchaseUserOptions(user?.uid));
         console.log("App: Restored Native Purchases ->", purchases);
         const hasPro = hasStoreProEntitlement(purchases);
         if (hasPro) {
@@ -842,6 +857,13 @@ export default function App() {
       } finally {
         setIsSyncing(false);
       }
+      return;
+    }
+
+    if (!user) {
+      setIsSyncing(false);
+      setShowUpgradeModal(false);
+      setShowLoginModal(true);
       return;
     }
 
@@ -951,15 +973,15 @@ export default function App() {
       platform: Capacitor.getPlatform()
     });
 
-    if (!user) {
-      console.log("App: No user found, opening login...");
-      setShowUpgradeModal(false);
-      setShowLoginModal(true);
+    if (effectiveIsPro) {
+      console.log("App: User is already Pro, aborting upgrade.");
       return;
     }
 
-    if (effectiveIsPro) {
-      console.log("App: User is already Pro, aborting upgrade.");
+    if (!Capacitor.isNativePlatform() && !user) {
+      console.log("App: No user found for web checkout, opening login...");
+      setShowUpgradeModal(false);
+      setShowLoginModal(true);
       return;
     }
 
@@ -983,7 +1005,7 @@ export default function App() {
 
         const product = products.find(item => productIds.includes(item.productId)) || products[0];
         if (!product) {
-          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
+          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
           if (hasStoreProEntitlement(purchases)) {
             await handleSuccessfulPurchase();
             return;
@@ -995,7 +1017,7 @@ export default function App() {
         const transaction = await InAppPurchase.purchaseProduct({
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
-          ...nativePurchaseUserOptions(user.uid)
+          ...nativePurchaseUserOptions(user?.uid)
         }) as any;
 
         if (transaction?.transactionId || transaction?.status === 'purchased') {
@@ -1009,7 +1031,7 @@ export default function App() {
       } catch (error: any) {
         console.error("App: Native Purchase failed", error);
         try {
-          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user.uid));
+          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
           if (hasStoreProEntitlement(purchases)) {
             await handleSuccessfulPurchase();
             return;
@@ -3351,7 +3373,26 @@ Calculated via The Sparkys Mate
                 )}
               </button>
 
+              {!user && Capacitor.isNativePlatform() && (
+                <p className="mt-3 text-[10px] text-gray-500 text-center leading-relaxed">
+                  No account is required to purchase Pro on this device. Sign in later if you want to sync access across your supported devices.
+                </p>
+              )}
+
               <div className="flex flex-col items-center gap-4 mt-6">
+                {!user && Capacitor.isNativePlatform() && (
+                  <button
+                    onClick={() => {
+                      setShowUpgradeModal(false);
+                      setIsSignUp(false);
+                      setShowLoginModal(true);
+                    }}
+                    className="text-[10px] font-bold text-gray-400 uppercase tracking-widest hover:text-white transition-colors"
+                  >
+                    Sign In To Sync Access
+                  </button>
+                )}
+
                 <button
                   onClick={handleRestorePurchases}
                   className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors"
@@ -3435,9 +3476,12 @@ Calculated via The Sparkys Mate
                     onClick={() => handleLogin('apple')}
                     className="flex items-center justify-center gap-2 py-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/10 transition-all group"
                   >
-                    <div className="w-5 h-5 bg-white/10 rounded flex items-center justify-center text-white group-hover:scale-110 transition-transform">
-                      <Apple size={14} />
-                    </div>
+                    <img
+                      src="/apple-sign-in-icon.jpeg"
+                      alt=""
+                      aria-hidden="true"
+                      className="h-5 w-5 rounded object-cover group-hover:scale-110 transition-transform"
+                    />
                     <span className="text-[10px] font-bold uppercase tracking-widest">Apple</span>
                   </button>
                 </div>
