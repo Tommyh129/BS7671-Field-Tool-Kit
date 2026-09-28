@@ -395,6 +395,8 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
+  const [resumeUpgradeAfterAuth, setResumeUpgradeAfterAuth] = useState(false);
+  const [showPostPurchaseAccountPrompt, setShowPostPurchaseAccountPrompt] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -788,6 +790,30 @@ export default function App() {
     await signInWithCredential(auth, credential);
   };
 
+  const openAuthModal = (signUp: boolean, resumeUpgrade = false) => {
+    setLoginError(null);
+    setIsSignUp(signUp);
+    setResumeUpgradeAfterAuth(resumeUpgrade);
+    setShowUpgradeModal(false);
+    setShowPostPurchaseAccountPrompt(false);
+    setShowLoginModal(true);
+  };
+
+  const closeAuthModal = () => {
+    setShowLoginModal(false);
+    setResumeUpgradeAfterAuth(false);
+    setLoginError(null);
+  };
+
+  const completeAuthFlow = () => {
+    const shouldResumeUpgrade = resumeUpgradeAfterAuth;
+    setShowLoginModal(false);
+    setResumeUpgradeAfterAuth(false);
+    if (shouldResumeUpgrade) {
+      setShowUpgradeModal(true);
+    }
+  };
+
   const handleLogin = async (providerType: 'google' | 'apple' | 'email' = 'google') => {
     setLoginError(null);
     if (providerType === 'email') {
@@ -802,7 +828,7 @@ export default function App() {
         } else {
           await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
         }
-        setShowLoginModal(false);
+        completeAuthFlow();
         setLoginEmail('');
         setLoginPassword('');
       } catch (error: any) {
@@ -827,10 +853,10 @@ export default function App() {
 
       if (Capacitor.isNativePlatform()) {
         await handleNativeSocialLogin(providerType);
-        setShowLoginModal(false);
+        completeAuthFlow();
       } else {
         await signInWithPopup(auth, provider);
-        setShowLoginModal(false);
+        completeAuthFlow();
       }
     } catch (error: any) {
       console.error(`${providerType} login failed`, error);
@@ -863,7 +889,7 @@ export default function App() {
     checkActivePurchases();
   }, [user]);
 
-  const handleSuccessfulPurchase = async () => {
+  const handleSuccessfulPurchase = async ({ promptForAccount = false }: { promptForAccount?: boolean } = {}) => {
     const activeUser = auth.currentUser || user;
     console.log("App: Handling successful purchase for:", activeUser?.uid || "device-only");
 
@@ -872,6 +898,9 @@ export default function App() {
     setShowUpgradeModal(false);
 
     if (!activeUser) {
+      if (promptForAccount) {
+        setShowPostPurchaseAccountPrompt(true);
+      }
       return;
     }
 
@@ -900,7 +929,7 @@ export default function App() {
         console.log("App: Restored Native Purchases ->", purchases);
         const hasPro = hasStoreProEntitlement(purchases);
         if (hasPro) {
-          await handleSuccessfulPurchase();
+          await handleSuccessfulPurchase({ promptForAccount: true });
         } else {
           alert('No active Pro subscription was found for this store account.');
         }
@@ -914,8 +943,7 @@ export default function App() {
 
     if (!user) {
       setIsSyncing(false);
-      setShowUpgradeModal(false);
-      setShowLoginModal(true);
+      openAuthModal(false);
       return;
     }
 
@@ -1103,8 +1131,9 @@ export default function App() {
   };
 
   const handleUpgrade = async () => {
+    const purchaseUser = auth.currentUser || user;
     console.log("App: handleUpgrade triggered", {
-      hasUser: !!user,
+      hasUser: !!purchaseUser,
       effectiveIsPro,
       isNative: Capacitor.isNativePlatform(),
       platform: Capacitor.getPlatform()
@@ -1115,10 +1144,9 @@ export default function App() {
       return;
     }
 
-    if (!Capacitor.isNativePlatform() && !user) {
+    if (!Capacitor.isNativePlatform() && !purchaseUser) {
       console.log("App: No user found for web checkout, opening login...");
-      setShowUpgradeModal(false);
-      setShowLoginModal(true);
+      openAuthModal(false, true);
       return;
     }
 
@@ -1131,19 +1159,9 @@ export default function App() {
         const purchasePlatform = Capacitor.getPlatform();
         console.log("App: Starting Native Purchase flow for:", productIds);
 
-        // Android's BillingClient connects asynchronously. getProducts() waits for
-        // that connection; checking canMakePurchases() here can reject a valid
-        // account while the client is still connecting.
-        if (purchasePlatform !== 'android') {
-          const { allowed } = await InAppPurchase.canMakePurchases();
-          console.info('[BillingDiagnostics] canMakePurchases completed', {
-            platform: purchasePlatform,
-            allowed
-          });
-          if (!allowed) {
-            throw new Error('Purchases are not available on this device or account.');
-          }
-        }
+        // Query the native store directly. Readiness checks can report false while
+        // BillingClient or StoreKit is still connecting; getProducts() already
+        // waits for the Android connection and returns the actionable store result.
 
         console.info('[BillingDiagnostics] Requesting subscription products', {
           productIds,
@@ -1170,9 +1188,9 @@ export default function App() {
           console.warn('[BillingDiagnostics] No matching product details were returned', {
             requestedProductIds: productIds
           });
-          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
+          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(purchaseUser?.uid));
           if (hasStoreProEntitlement(purchases)) {
-            await handleSuccessfulPurchase();
+            await handleSuccessfulPurchase({ promptForAccount: true });
             return;
           }
 
@@ -1194,7 +1212,7 @@ export default function App() {
         const transaction = await InAppPurchase.purchaseProduct({
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
-          ...nativePurchaseUserOptions(user?.uid)
+          ...nativePurchaseUserOptions(purchaseUser?.uid)
         }) as any;
         console.info('[BillingDiagnostics] Native purchase call completed', {
           productId: product.productId,
@@ -1206,7 +1224,7 @@ export default function App() {
 
         if (transaction?.transactionId || transaction?.status === 'purchased') {
           console.log("App: Native Purchase success ->", transaction.transactionId);
-          await handleSuccessfulPurchase();
+          await handleSuccessfulPurchase({ promptForAccount: true });
         } else if (transaction?.status === 'pending') {
           alert('Your purchase is pending approval in the store. Pro will unlock once the purchase completes.');
         } else {
@@ -1216,9 +1234,9 @@ export default function App() {
         console.error("App: Native Purchase failed", error);
         const failedAttemptDiagnostics = await readAndroidBillingDiagnostics('Go Pro purchase attempt failed');
         try {
-          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
+          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(purchaseUser?.uid));
           if (hasStoreProEntitlement(purchases)) {
-            await handleSuccessfulPurchase();
+            await handleSuccessfulPurchase({ promptForAccount: true });
             return;
           }
         } catch (restoreError) {
@@ -1243,7 +1261,7 @@ export default function App() {
       const response = await fetch(getApiUrl('/api/create-checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.uid, email: user.email }),
+        body: JSON.stringify({ userId: purchaseUser!.uid, email: purchaseUser!.email }),
       });
 
       const { url, error } = await response.json();
@@ -1661,7 +1679,7 @@ Calculated via The Sparkys Mate
         </div>
         {!effectiveIsPro && (
           <button
-            onClick={handleUpgrade}
+            onClick={() => setShowUpgradeModal(true)}
             className="bg-emerald-500/10 text-emerald-500 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
           >
             <Crown size={12} />
@@ -1988,7 +2006,7 @@ Calculated via The Sparkys Mate
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="sm:col-span-2 p-6 sm:p-8 bg-emerald-500 rounded-[32px] text-black relative overflow-hidden group cursor-pointer mt-4"
-          onClick={handleUpgrade}
+          onClick={() => setShowUpgradeModal(true)}
         >
           <div className="absolute top-0 right-0 p-12 opacity-10 group-hover:scale-110 transition-transform">
             <Crown size={120} />
@@ -1999,7 +2017,7 @@ Calculated via The Sparkys Mate
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                handleUpgrade();
+                setShowUpgradeModal(true);
               }}
               disabled={isUpgrading}
               className="bg-black text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-zinc-900 transition-colors disabled:opacity-50 flex items-center gap-2"
@@ -2028,7 +2046,7 @@ Calculated via The Sparkys Mate
             <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest animate-pulse mb-2">
               {isSyncing ? "Syncing Subscription..." : "Initializing Suite..."}
             </p>
-            <p className="text-gray-700 text-[8px] uppercase tracking-widest">The Sparkys Mate v1.0.12</p>
+            <p className="text-gray-700 text-[8px] uppercase tracking-widest">The Sparkys Mate v1.0.21</p>
           </div>
         </div>
       </div>
@@ -2074,7 +2092,7 @@ Calculated via The Sparkys Mate
               ) : (
                 <button
                   id="login-button-main"
-                  onClick={() => setShowLoginModal(true)}
+                  onClick={() => openAuthModal(false)}
                   className="bg-emerald-500 text-black px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-emerald-400 transition-colors flex items-center gap-2"
                 >
                   <LogIn size={12} />
@@ -3566,8 +3584,24 @@ Calculated via The Sparkys Mate
 
               {!user && Capacitor.isNativePlatform() && (
                 <p className="mt-3 text-[10px] text-gray-500 text-center leading-relaxed">
-                  No account is required to purchase Pro on this device. Sign in later if you want to sync access across your supported devices.
+                  You can start the trial without an account. Creating an account is optional and lets you sync Pro access across your supported devices.
                 </p>
+              )}
+
+              {!user && (
+                <div className="mt-4 space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal(true, true)}
+                    className="w-full min-h-12 px-4 py-3 border border-emerald-500/40 text-emerald-400 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-500/10 transition-colors"
+                  >
+                    <Mail size={15} />
+                    Create Account With Email
+                  </button>
+                  <p className="text-[10px] text-gray-500 text-center leading-relaxed">
+                    Use any email address and password. A Google account is not required.
+                  </p>
+                </div>
               )}
 
               {ANDROID_BILLING_DIAGNOSTICS_ENABLED && Capacitor.getPlatform() === 'android' && (
@@ -3644,16 +3678,12 @@ Calculated via The Sparkys Mate
               )}
 
               <div className="flex flex-col items-center gap-4 mt-6">
-                {!user && Capacitor.isNativePlatform() && (
+                {!user && (
                   <button
-                    onClick={() => {
-                      setShowUpgradeModal(false);
-                      setIsSignUp(false);
-                      setShowLoginModal(true);
-                    }}
+                    onClick={() => openAuthModal(false, true)}
                     className="text-[10px] font-bold text-gray-400 uppercase tracking-widest hover:text-white transition-colors"
                   >
-                    Sign In To Sync Access
+                    Already Have An Account? Sign In
                   </button>
                 )}
 
@@ -3702,13 +3732,57 @@ Calculated via The Sparkys Mate
           </ModalSheet>
         )}
 
+        {showPostPurchaseAccountPrompt && (
+          <ModalSheet
+            onClose={() => setShowPostPurchaseAccountPrompt(false)}
+            ariaLabel="Create an account for Pro access"
+            panelClassName="border-emerald-500/30 p-5 sm:p-7"
+          >
+            <div className="flex justify-center mb-5">
+              <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500">
+                <CheckCircle2 size={34} />
+              </div>
+            </div>
+            <div className="text-center mb-6">
+              <h3 className="text-2xl font-bold mb-2">Pro Is Active</h3>
+              <p className="text-gray-400 text-sm leading-relaxed">
+                Your purchase works on this device. Create an optional account with any email address to sync Pro access across your supported devices.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => openAuthModal(true)}
+                className="w-full min-h-14 bg-emerald-500 text-black px-4 py-4 rounded-2xl font-black uppercase tracking-wider text-xs flex items-center justify-center gap-2 hover:bg-emerald-400 transition-colors"
+              >
+                <Mail size={17} />
+                Create Account With Email
+              </button>
+              <button
+                type="button"
+                onClick={() => openAuthModal(false)}
+                className="w-full min-h-12 px-4 py-3 border border-white/10 text-gray-300 rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-white/5 transition-colors"
+              >
+                Already Have An Account? Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPostPurchaseAccountPrompt(false)}
+                className="w-full py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors"
+              >
+                Not Now
+              </button>
+            </div>
+          </ModalSheet>
+        )}
+
         {showLoginModal && (
           <div className="safe-modal-shell fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowLoginModal(false)}
+              onClick={closeAuthModal}
               className="absolute inset-0 bg-black/90 backdrop-blur-md"
             />
             <motion.div
@@ -3717,49 +3791,20 @@ Calculated via The Sparkys Mate
               exit={{ y: '100%' }}
               className="safe-modal-panel relative w-full max-w-md bg-hardware-card border border-hardware-border rounded-t-[32px] sm:rounded-[32px] p-5 sm:p-7 overflow-y-auto"
             >
-              <div className="flex justify-between items-center mb-8">
-                <h3 className="text-xl font-bold uppercase tracking-tight">Sign In</h3>
-                <button onClick={() => setShowLoginModal(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xl font-bold uppercase tracking-tight">{isSignUp ? 'Create Account' : 'Sign In'}</h3>
+                <button onClick={closeAuthModal} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors">
                   <X size={20} />
                 </button>
               </div>
 
+              <p className="text-xs text-gray-500 leading-relaxed mb-6">
+                {isSignUp
+                  ? 'Create an account with any email address and password. Google and Apple are optional.'
+                  : 'Sign in with your email and password, or use an optional provider below.'}
+              </p>
+
               <div className="space-y-4">
-                {/* Social Logins */}
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => handleLogin('google')}
-                    className="flex items-center justify-center gap-2 py-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/10 transition-all group"
-                  >
-                    <div className="w-5 h-5 bg-white/10 rounded flex items-center justify-center text-white group-hover:scale-110 transition-transform">
-                      <LogIn size={14} />
-                    </div>
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Google</span>
-                  </button>
-                  <button
-                    onClick={() => handleLogin('apple')}
-                    className="flex items-center justify-center gap-2 py-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/10 transition-all group"
-                  >
-                    <img
-                      src="/apple-sign-in-icon.jpeg"
-                      alt=""
-                      aria-hidden="true"
-                      className="h-5 w-5 rounded object-cover group-hover:scale-110 transition-transform"
-                    />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Apple</span>
-                  </button>
-                </div>
-
-                <div className="relative py-4">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-white/5"></div>
-                  </div>
-                  <div className="relative flex justify-center text-[8px] uppercase font-bold tracking-[0.2em] text-gray-600">
-                    <span className="bg-hardware-card px-4">Or continue with email</span>
-                  </div>
-                </div>
-
-                {/* Email Login */}
                 <div className="space-y-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Email Address</label>
@@ -3825,6 +3870,41 @@ Calculated via The Sparkys Mate
                     className="py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-white transition-colors w-full text-center"
                   >
                     {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+                  </button>
+                </div>
+
+                <div className="relative py-3">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-white/5"></div>
+                  </div>
+                  <div className="relative flex justify-center text-[8px] uppercase font-bold tracking-[0.2em] text-gray-600">
+                    <span className="bg-hardware-card px-4">Or use an optional provider</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => handleLogin('google')}
+                    disabled={isLoggingIn}
+                    className="flex items-center justify-center gap-2 py-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/10 transition-all group disabled:opacity-50"
+                  >
+                    <div className="w-5 h-5 bg-white/10 rounded flex items-center justify-center text-white group-hover:scale-110 transition-transform">
+                      <LogIn size={14} />
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Google</span>
+                  </button>
+                  <button
+                    onClick={() => handleLogin('apple')}
+                    disabled={isLoggingIn}
+                    className="flex items-center justify-center gap-2 py-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/10 transition-all group disabled:opacity-50"
+                  >
+                    <img
+                      src="/apple-sign-in-icon.jpeg"
+                      alt=""
+                      aria-hidden="true"
+                      className="h-5 w-5 rounded object-cover group-hover:scale-110 transition-transform"
+                    />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Apple</span>
                   </button>
                 </div>
               </div>
