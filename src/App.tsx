@@ -162,8 +162,29 @@ const SUPPORT_URL = `${PUBLIC_APP_URL}?page=support`;
 const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
 const DEFAULT_PRO_PRODUCT_ID = 'pro_subscription';
 const PRO_PRODUCT_TYPE = 'subscription';
+const ANDROID_BILLING_DIAGNOSTICS_ENABLED = import.meta.env.VITE_ANDROID_BILLING_DIAGNOSTICS === 'true';
 type StorePurchaseLike = { productId?: string | null };
 type HistorySaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+type BillingDiagnosticSnapshot = {
+  allowed: boolean;
+  billingClientInitialized: boolean;
+  billingClientReady: boolean;
+  billingConnected: boolean;
+  lastStage: string;
+  failedCheck: string;
+  responseCode: number | null;
+  debugMessage: string;
+  productDetailsReturned: boolean;
+  eligibleOfferReturned: boolean;
+  eligibleOfferCount: number;
+  selectedBasePlanId: string;
+  selectedOfferId: string;
+  requestedProductIds: string[];
+  returnedProductIds: string[];
+};
+type BillingDiagnosticsBridge = {
+  getBillingDiagnostics: () => Promise<BillingDiagnosticSnapshot>;
+};
 type HistorySavePayload = {
   type: CalculationHistory['type'];
   title: string;
@@ -175,6 +196,33 @@ const envValue = (key: string) => {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
   return env?.[key]?.trim();
 };
+
+const sanitizeBillingDiagnosticText = (value: unknown) => String(value ?? '')
+  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+  .replace(/\b(purchaseToken|token|orderId|accountId|email)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+  .slice(0, 500);
+
+const sanitizeBillingProductIds = (value: unknown) => Array.isArray(value)
+  ? value.map(item => sanitizeBillingDiagnosticText(item).slice(0, 160)).filter(Boolean).slice(0, 20)
+  : [];
+
+const sanitizeBillingDiagnosticSnapshot = (snapshot: BillingDiagnosticSnapshot): BillingDiagnosticSnapshot => ({
+  allowed: Boolean(snapshot.allowed),
+  billingClientInitialized: Boolean(snapshot.billingClientInitialized),
+  billingClientReady: Boolean(snapshot.billingClientReady),
+  billingConnected: Boolean(snapshot.billingConnected),
+  lastStage: sanitizeBillingDiagnosticText(snapshot.lastStage) || 'unknown',
+  failedCheck: sanitizeBillingDiagnosticText(snapshot.failedCheck) || 'unknown',
+  responseCode: Number.isInteger(snapshot.responseCode) ? snapshot.responseCode : null,
+  debugMessage: sanitizeBillingDiagnosticText(snapshot.debugMessage) || 'No debug message supplied by Google Play.',
+  productDetailsReturned: Boolean(snapshot.productDetailsReturned),
+  eligibleOfferReturned: Boolean(snapshot.eligibleOfferReturned),
+  eligibleOfferCount: Number.isFinite(snapshot.eligibleOfferCount) ? snapshot.eligibleOfferCount : 0,
+  selectedBasePlanId: sanitizeBillingDiagnosticText(snapshot.selectedBasePlanId) || 'none',
+  selectedOfferId: sanitizeBillingDiagnosticText(snapshot.selectedOfferId) || 'none',
+  requestedProductIds: sanitizeBillingProductIds(snapshot.requestedProductIds),
+  returnedProductIds: sanitizeBillingProductIds(snapshot.returnedProductIds)
+});
 
 const productIdList = (...values: Array<string | undefined>) => {
   const ids = values
@@ -423,6 +471,10 @@ export default function App() {
   }, [isPro, hasNativeProPurchase, user]);
 
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showBillingDiagnostics, setShowBillingDiagnostics] = useState(false);
+  const [billingDiagnostics, setBillingDiagnostics] = useState<BillingDiagnosticSnapshot | null>(null);
+  const [billingDiagnosticsContext, setBillingDiagnosticsContext] = useState('Not checked yet');
+  const [billingDiagnosticsCopyStatus, setBillingDiagnosticsCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [cleanMode, setCleanMode] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -965,6 +1017,91 @@ export default function App() {
     }
   };
 
+  const readAndroidBillingDiagnostics = async (context: string) => {
+    if (!ANDROID_BILLING_DIAGNOSTICS_ENABLED || Capacitor.getPlatform() !== 'android') {
+      return null;
+    }
+
+    setBillingDiagnosticsContext(sanitizeBillingDiagnosticText(context) || 'Unknown check');
+    try {
+      const snapshot = await (InAppPurchase as unknown as BillingDiagnosticsBridge).getBillingDiagnostics();
+      const sanitizedSnapshot = sanitizeBillingDiagnosticSnapshot(snapshot);
+      setBillingDiagnostics(sanitizedSnapshot);
+      return sanitizedSnapshot;
+    } catch (error) {
+      const fallback: BillingDiagnosticSnapshot = {
+        allowed: false,
+        billingClientInitialized: false,
+        billingClientReady: false,
+        billingConnected: false,
+        lastStage: 'diagnostic_bridge',
+        failedCheck: 'diagnostic_bridge_unavailable',
+        responseCode: null,
+        debugMessage: sanitizeBillingDiagnosticText(error instanceof Error ? error.message : error) || 'Diagnostic bridge unavailable.',
+        productDetailsReturned: false,
+        eligibleOfferReturned: false,
+        eligibleOfferCount: 0,
+        selectedBasePlanId: 'none',
+        selectedOfferId: 'none',
+        requestedProductIds: nativeProProductIds(),
+        returnedProductIds: []
+      };
+      setBillingDiagnostics(fallback);
+      return fallback;
+    }
+  };
+
+  const openAndroidBillingDiagnostics = async () => {
+    setBillingDiagnosticsCopyStatus('idle');
+    await readAndroidBillingDiagnostics('Manual diagnostic check');
+    setShowBillingDiagnostics(true);
+  };
+
+  const copyAndroidBillingDiagnostics = async () => {
+    if (!billingDiagnostics) return;
+
+    const safeLines = [
+      'The Sparkys Mate - Android billing diagnostics',
+      'Diagnostic build only',
+      `Context: ${sanitizeBillingDiagnosticText(billingDiagnosticsContext)}`,
+      `Failed check: ${billingDiagnostics.failedCheck}`,
+      `Last stage: ${billingDiagnostics.lastStage}`,
+      `Response code: ${billingDiagnostics.responseCode ?? 'not supplied'}`,
+      `Debug message: ${billingDiagnostics.debugMessage}`,
+      `Purchases allowed: ${billingDiagnostics.allowed}`,
+      `Billing client initialized: ${billingDiagnostics.billingClientInitialized}`,
+      `Billing client ready: ${billingDiagnostics.billingClientReady}`,
+      `Billing connected: ${billingDiagnostics.billingConnected}`,
+      `Requested product IDs: ${billingDiagnostics.requestedProductIds.join(', ') || 'none'}`,
+      `Returned product IDs: ${billingDiagnostics.returnedProductIds.join(', ') || 'none'}`,
+      `Product details returned: ${billingDiagnostics.productDetailsReturned}`,
+      `Eligible offer returned: ${billingDiagnostics.eligibleOfferReturned}`,
+      `Eligible offer count: ${billingDiagnostics.eligibleOfferCount}`,
+      `Selected base plan ID: ${billingDiagnostics.selectedBasePlanId}`,
+      `Selected offer ID: ${billingDiagnostics.selectedOfferId}`
+    ];
+    const diagnosticText = safeLines.join('\n');
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(diagnosticText);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = diagnosticText;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        const copied = document.execCommand('copy');
+        textArea.remove();
+        if (!copied) throw new Error('Copy command was rejected.');
+      }
+      setBillingDiagnosticsCopyStatus('copied');
+    } catch {
+      setBillingDiagnosticsCopyStatus('error');
+    }
+  };
+
   const handleUpgrade = async () => {
     console.log("App: handleUpgrade triggered", {
       hasUser: !!user,
@@ -991,20 +1128,48 @@ export default function App() {
     if (Capacitor.isNativePlatform()) {
       try {
         const productIds = nativeProProductIds();
+        const purchasePlatform = Capacitor.getPlatform();
         console.log("App: Starting Native Purchase flow for:", productIds);
-        const { allowed } = await InAppPurchase.canMakePurchases();
-        if (!allowed) {
-          throw new Error('Purchases are not available on this device or account.');
+
+        // Android's BillingClient connects asynchronously. getProducts() waits for
+        // that connection; checking canMakePurchases() here can reject a valid
+        // account while the client is still connecting.
+        if (purchasePlatform !== 'android') {
+          const { allowed } = await InAppPurchase.canMakePurchases();
+          console.info('[BillingDiagnostics] canMakePurchases completed', {
+            platform: purchasePlatform,
+            allowed
+          });
+          if (!allowed) {
+            throw new Error('Purchases are not available on this device or account.');
+          }
         }
 
+        console.info('[BillingDiagnostics] Requesting subscription products', {
+          productIds,
+          productType: PRO_PRODUCT_TYPE
+        });
         const { products } = await InAppPurchase.getProducts({
           productIds,
           productType: PRO_PRODUCT_TYPE as any
         });
         console.log("App: Store products returned ->", products);
+        console.info('[BillingDiagnostics] Subscription product query completed', {
+          requestedProductIds: productIds,
+          returnedProductCount: products.length,
+          returnedProducts: products.map(product => ({
+            productId: product.productId,
+            productType: product.productType,
+            price: product.price,
+            eligibleOfferReturned: Boolean((product as typeof product & { offerToken?: string }).offerToken)
+          }))
+        });
 
         const product = products.find(item => productIds.includes(item.productId)) || products[0];
         if (!product) {
+          console.warn('[BillingDiagnostics] No matching product details were returned', {
+            requestedProductIds: productIds
+          });
           const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
           if (hasStoreProEntitlement(purchases)) {
             await handleSuccessfulPurchase();
@@ -1014,11 +1179,30 @@ export default function App() {
           throw new Error(productUnavailableMessage(productIds));
         }
 
+        const offerToken = (product as typeof product & { offerToken?: string }).offerToken;
+        if (purchasePlatform === 'android' && PRO_PRODUCT_TYPE === 'subscription' && !offerToken) {
+          throw new Error(
+            `Google Play returned ${product.productId}, but no eligible subscription base plan or offer was available for this account.`
+          );
+        }
+
+        console.info('[BillingDiagnostics] Launching native purchase', {
+          selectedProductId: product.productId,
+          productType: PRO_PRODUCT_TYPE,
+          eligibleOfferReturned: Boolean(offerToken)
+        });
         const transaction = await InAppPurchase.purchaseProduct({
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
           ...nativePurchaseUserOptions(user?.uid)
         }) as any;
+        console.info('[BillingDiagnostics] Native purchase call completed', {
+          productId: product.productId,
+          status: transaction?.status,
+          errorCode: transaction?.errorCode,
+          errorMessage: transaction?.errorMessage,
+          hasTransactionId: Boolean(transaction?.transactionId)
+        });
 
         if (transaction?.transactionId || transaction?.status === 'purchased') {
           console.log("App: Native Purchase success ->", transaction.transactionId);
@@ -1030,6 +1214,7 @@ export default function App() {
         }
       } catch (error: any) {
         console.error("App: Native Purchase failed", error);
+        const failedAttemptDiagnostics = await readAndroidBillingDiagnostics('Go Pro purchase attempt failed');
         try {
           const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
           if (hasStoreProEntitlement(purchases)) {
@@ -1039,7 +1224,13 @@ export default function App() {
         } catch (restoreError) {
           console.error("App: Failed to re-check purchases after purchase error", restoreError);
         }
-        alert(`Purchase failed: ${error?.message || 'Unknown error'}. Please try again.`);
+        if (failedAttemptDiagnostics) {
+          setBillingDiagnostics(failedAttemptDiagnostics);
+          setBillingDiagnosticsCopyStatus('idle');
+          setShowBillingDiagnostics(true);
+        }
+        const failureMessage = String(error?.message || 'Unknown error').trim().replace(/[.\s]+$/, '');
+        alert(`Purchase failed: ${failureMessage}. Please try again.`);
       } finally {
         setIsUpgrading(false);
       }
@@ -3377,6 +3568,79 @@ Calculated via The Sparkys Mate
                 <p className="mt-3 text-[10px] text-gray-500 text-center leading-relaxed">
                   No account is required to purchase Pro on this device. Sign in later if you want to sync access across your supported devices.
                 </p>
+              )}
+
+              {ANDROID_BILLING_DIAGNOSTICS_ENABLED && Capacitor.getPlatform() === 'android' && (
+                <div className="mt-4 border border-amber-400/30 bg-amber-400/5 rounded-2xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={openAndroidBillingDiagnostics}
+                    className="w-full min-h-12 px-4 py-3 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-widest text-amber-300 hover:bg-amber-400/10 transition-colors"
+                  >
+                    <Activity size={15} />
+                    Billing Diagnostics
+                  </button>
+
+                  {showBillingDiagnostics && (
+                    <div className="border-t border-amber-400/20 px-4 py-4 text-left space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-amber-300">Diagnostic Build Only</p>
+                          <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                            This report contains store status only. It excludes account, payment, receipt and purchase-token data.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowBillingDiagnostics(false)}
+                          className="p-2 text-gray-500 hover:text-white transition-colors"
+                          aria-label="Close billing diagnostics"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      {billingDiagnostics ? (
+                        <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-x-3 gap-y-2 text-[10px] leading-relaxed">
+                          <dt className="text-gray-500">Failed check</dt>
+                          <dd className="font-mono text-amber-200 break-words">{billingDiagnostics.failedCheck}</dd>
+                          <dt className="text-gray-500">Response code</dt>
+                          <dd className="font-mono text-white break-words">{billingDiagnostics.responseCode ?? 'Not supplied'}</dd>
+                          <dt className="text-gray-500">Debug message</dt>
+                          <dd className="font-mono text-white break-words">{billingDiagnostics.debugMessage}</dd>
+                          <dt className="text-gray-500">Connected</dt>
+                          <dd className="font-mono text-white">{billingDiagnostics.billingConnected ? 'Yes' : 'No'}</dd>
+                          <dt className="text-gray-500">Product details</dt>
+                          <dd className="font-mono text-white">{billingDiagnostics.productDetailsReturned ? 'Returned' : 'Not returned'}</dd>
+                          <dt className="text-gray-500">Eligible offer</dt>
+                          <dd className="font-mono text-white">
+                            {billingDiagnostics.eligibleOfferReturned ? `Returned (${billingDiagnostics.eligibleOfferCount})` : 'Not returned'}
+                          </dd>
+                          <dt className="text-gray-500">Requested ID</dt>
+                          <dd className="font-mono text-white break-words">{billingDiagnostics.requestedProductIds.join(', ') || 'None'}</dd>
+                          <dt className="text-gray-500">Returned ID</dt>
+                          <dd className="font-mono text-white break-words">{billingDiagnostics.returnedProductIds.join(', ') || 'None'}</dd>
+                        </dl>
+                      ) : (
+                        <p className="text-[10px] text-gray-500">Reading Google Play Billing state...</p>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={copyAndroidBillingDiagnostics}
+                        disabled={!billingDiagnostics}
+                        className="w-full min-h-11 px-4 py-3 border border-amber-400/30 text-amber-200 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-amber-400/10 transition-colors disabled:opacity-40"
+                      >
+                        {billingDiagnosticsCopyStatus === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+                        {billingDiagnosticsCopyStatus === 'copied'
+                          ? 'Diagnostics Copied'
+                          : billingDiagnosticsCopyStatus === 'error'
+                            ? 'Copy Failed - Try Again'
+                            : 'Copy Diagnostics'}
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
 
               <div className="flex flex-col items-center gap-4 mt-6">

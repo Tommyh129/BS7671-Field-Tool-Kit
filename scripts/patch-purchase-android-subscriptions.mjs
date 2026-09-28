@@ -13,8 +13,27 @@ function requireFile(filePath) {
   }
 }
 
+const evolvedPatchMarkers = {
+  'Android billing diagnostic helpers': 'private fun sanitizeDiagnosticText',
+  'Android purchase update diagnostics': 'purchase_update_failed',
+  'Android billing setup diagnostics': 'billing_setup_failed',
+  'Android billing setup failure snapshot': 'private data class PendingBillingOperation',
+  'Android billing disconnect diagnostics': 'billing_service_disconnected',
+  'Android billing disconnect failure snapshot': 'private data class PendingBillingOperation',
+  'Android can make purchases diagnostics': 'billing_client_not_initialized',
+  'Android can make purchases failure snapshot': 'private data class PendingBillingOperation',
+  'Android returned product and eligible offer diagnostics': 'diagnosticReturnedProductIds = this.productDetailsList.map',
+  'Android eligible subscription offer diagnostics': 'diagnosticSelectedBasePlanId = selectedOffer?.basePlanId',
+  'Android launch billing flow diagnostics': 'launch_billing_flow_failed',
+  'Android plugin missing activity diagnostics': 'implementation.recordDiagnosticFailure('
+};
+
 function replaceRequired(content, search, replacement, label) {
   if (content.includes(replacement)) {
+    return content;
+  }
+  const evolvedMarker = evolvedPatchMarkers[label];
+  if (evolvedMarker && content.includes(evolvedMarker)) {
     return content;
   }
   if (!content.includes(search)) {
@@ -109,10 +128,11 @@ implementation = replaceRequired(
   'Android Billing 9 pending purchase setup'
 );
 
-implementation = replaceRequired(
-  implementation,
-  '    private var isBillingConnected = false\n',
-  `    private var isBillingConnected = false
+if (!implementation.includes('private fun billingProductTypeFor(productType: String?)')) {
+  implementation = replaceRequired(
+    implementation,
+    '    private var isBillingConnected = false\n',
+    `    private var isBillingConnected = false
 
     private fun billingProductTypeFor(productType: String?): String {
         return when (productType?.lowercase(Locale.ROOT)) {
@@ -121,7 +141,89 @@ implementation = replaceRequired(
         }
     }
 `,
-  'Android purchase product type helper'
+    'Android purchase product type helper'
+  );
+}
+
+implementation = replaceRequired(
+  implementation,
+  `    private fun billingProductTypeFor(productType: String?): String {
+`,
+  `    private var lastBillingResponseCode: Int? = null
+    private var lastBillingDebugMessage: String? = null
+
+    private fun logBillingResult(stage: String, billingResult: BillingResult) {
+        lastBillingResponseCode = billingResult.responseCode
+        lastBillingDebugMessage = billingResult.debugMessage
+        Log.d(TAG, "[BillingDiagnostics] stage=$stage responseCode=\${billingResult.responseCode} debugMessage=\\\"\${billingResult.debugMessage}\\\"")
+    }
+
+    private fun logBillingReadiness(stage: String) {
+        val initialized = ::billingClient.isInitialized
+        val ready = initialized && billingClient.isReady
+        Log.d(
+            TAG,
+            "[BillingDiagnostics] stage=$stage initialized=$initialized ready=$ready connected=$isBillingConnected " +
+                "lastResponseCode=\${lastBillingResponseCode ?: "none"} lastDebugMessage=\\\"\${lastBillingDebugMessage ?: "none"}\\\""
+        )
+    }
+
+    private fun billingProductTypeFor(productType: String?): String {
+`,
+  'Android billing diagnostic helpers'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `        Log.d(TAG, "onPurchasesUpdated: Response Code: \${billingResult.responseCode}, Purchases: \${purchases?.size ?: 0}")
+`,
+  `        logBillingResult("onPurchasesUpdated", billingResult)
+        Log.d(TAG, "[BillingDiagnostics] stage=onPurchasesUpdated purchaseCount=\${purchases?.size ?: 0}")
+`,
+  'Android purchase update diagnostics'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `            override fun onBillingSetupFinished(billingResult: BillingResult) {
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+`,
+  `            override fun onBillingSetupFinished(billingResult: BillingResult) {
+                logBillingResult("onBillingSetupFinished", billingResult)
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+`,
+  'Android billing setup diagnostics'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `            override fun onBillingServiceDisconnected() {
+                isBillingConnected = false
+                Log.w(TAG, "Billing Service Disconnected. Will attempt to reconnect on next operation or explicit retry.")
+`,
+  `            override fun onBillingServiceDisconnected() {
+                isBillingConnected = false
+                logBillingReadiness("onBillingServiceDisconnected")
+                Log.w(TAG, "Billing Service Disconnected. No BillingResult is supplied for this callback.")
+`,
+  'Android billing disconnect diagnostics'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `    fun canMakePurchases(): Boolean {
+        // Check both initialization and connection status
+        return ::billingClient.isInitialized && billingClient.isReady && isBillingConnected
+    }
+`,
+  `    fun canMakePurchases(): Boolean {
+        // Check both initialization and connection status
+        val allowed = ::billingClient.isInitialized && billingClient.isReady && isBillingConnected
+        logBillingReadiness("canMakePurchases allowed=$allowed")
+        return allowed
+    }
+`,
+  'Android can make purchases diagnostics'
 );
 
 implementation = replaceRequired(
@@ -169,9 +271,10 @@ implementation = replaceRequired(
   'Android product query log'
 );
 
-implementation = replaceRequiredAny(
-  implementation,
-  [
+if (!implementation.includes('[BillingDiagnostics] stage=queryProductDetailsAsync')) {
+  implementation = replaceRequiredAny(
+    implementation,
+    [
     `                billingClient.queryProductDetailsAsync(params) { billingResult, fetchedProductDetailsList ->
                     if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && fetchedProductDetailsList != null) {
                         Log.i(TAG, "Successfully fetched \${fetchedProductDetailsList.size} product details.")
@@ -203,8 +306,8 @@ implementation = replaceRequiredAny(
                     }
                 }
 `
-  ],
-  `                billingClient.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
+    ],
+    `                billingClient.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
                     val fetchedProductDetailsList = queryProductDetailsResult.productDetailsList
                     val unfetchedProducts = queryProductDetailsResult.unfetchedProductList
 
@@ -225,28 +328,94 @@ implementation = replaceRequiredAny(
                     }
                 }
 `,
-  'Android Billing 9 product details callback'
-);
+    'Android Billing 9 product details callback'
+  );
 
-implementation = replaceRequired(
-  implementation,
-  `                        this.productDetailsList = fetchedProductDetailsList
+  implementation = replaceRequired(
+    implementation,
+    `                        this.productDetailsList = fetchedProductDetailsList
                             .filter { it.productType == BillingClient.ProductType.INAPP } // Keep only INAPP for this example
                             .toMutableList()
                         // Store SUBS details separately if needed
                         callback(this.productDetailsList) // Return only the relevant (INAPP) products
 `,
+    `                        this.productDetailsList = fetchedProductDetailsList
+                            .filter { it.productType == billingProductType }
+                            .toMutableList()
+                        callback(this.productDetailsList)
+`,
+    'Android product details filter'
+  );
+}
+
+implementation = replaceRequired(
+  implementation,
+  `                billingClient.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
+                    val fetchedProductDetailsList = queryProductDetailsResult.productDetailsList
+`,
+  `                billingClient.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
+                    logBillingResult("queryProductDetailsAsync", billingResult)
+                    val fetchedProductDetailsList = queryProductDetailsResult.productDetailsList
+`,
+  'Android product query BillingResult diagnostics'
+);
+
+implementation = replaceRequired(
+  implementation,
   `                        this.productDetailsList = fetchedProductDetailsList
                             .filter { it.productType == billingProductType }
                             .toMutableList()
                         callback(this.productDetailsList)
 `,
-  'Android product details filter'
+  `                        this.productDetailsList = fetchedProductDetailsList
+                            .filter { it.productType == billingProductType }
+                            .toMutableList()
+                        Log.i(
+                            TAG,
+                            "[BillingDiagnostics] stage=queryProductDetailsAsync productDetailsReturned=\${this.productDetailsList.isNotEmpty()} " +
+                                "fetchedCount=\${fetchedProductDetailsList.size} matchingTypeCount=\${this.productDetailsList.size} " +
+                                "requestedIds=$productIds returnedIds=\${this.productDetailsList.map { it.productId }}"
+                        )
+                        this.productDetailsList.forEach { details ->
+                            val eligibleOffers = details.subscriptionOfferDetails.orEmpty()
+                            Log.i(
+                                TAG,
+                                "[BillingDiagnostics] productId=\${details.productId} productType=\${details.productType} " +
+                                    "eligibleOfferReturned=\${eligibleOffers.isNotEmpty()} eligibleOfferCount=\${eligibleOffers.size}"
+                            )
+                            eligibleOffers.forEachIndexed { index, offer ->
+                                Log.d(
+                                    TAG,
+                                    "[BillingDiagnostics] productId=\${details.productId} offerIndex=$index " +
+                                        "basePlanId=\${offer.basePlanId} offerId=\${offer.offerId ?: "base-plan"} " +
+                                        "pricingPhaseCount=\${offer.pricingPhases.pricingPhaseList.size}"
+                                )
+                            }
+                        }
+                        callback(this.productDetailsList)
+`,
+  'Android returned product and eligible offer diagnostics'
 );
 
 implementation = replaceRequired(
   implementation,
-  `                 val productDetailsParamsList = listOf(
+  `                        Log.e(TAG, "Product ID '$productId' not found in fetched details. Call getProducts first.")
+`,
+  `                        Log.e(
+                            TAG,
+                            "[BillingDiagnostics] Product details missing for productId=$productId " +
+                                "cachedProductIds=\${productDetailsList.map { it.productId }} " +
+                                "lastResponseCode=\${lastBillingResponseCode ?: "none"} " +
+                                "lastDebugMessage=\\\"\${lastBillingDebugMessage ?: "none"}\\\""
+                        )
+`,
+  'Android missing cached product diagnostics'
+);
+
+if (!implementation.includes('[BillingDiagnostics] stage=selectOffer')) {
+  implementation = replaceRequired(
+    implementation,
+    `                 val productDetailsParamsList = listOf(
                      BillingFlowParams.ProductDetailsParams.newBuilder()
                          .setProductDetails(productDetails)
                          // If this were a subscription offer, you'd set the offer token here:
@@ -254,7 +423,7 @@ implementation = replaceRequired(
                          .build()
                  )
 `,
-  `                 val productDetailsParamsBuilder = BillingFlowParams.ProductDetailsParams.newBuilder()
+    `                 val productDetailsParamsBuilder = BillingFlowParams.ProductDetailsParams.newBuilder()
                      .setProductDetails(productDetails)
 
                  productDetails.subscriptionOfferDetails?.firstOrNull()?.offerToken?.let { offerToken ->
@@ -263,7 +432,51 @@ implementation = replaceRequired(
 
                  val productDetailsParamsList = listOf(productDetailsParamsBuilder.build())
 `,
-  'Android subscription offer token'
+    'Android subscription offer token'
+  );
+}
+
+implementation = replaceRequired(
+  implementation,
+  `                 val productDetailsParamsBuilder = BillingFlowParams.ProductDetailsParams.newBuilder()
+                     .setProductDetails(productDetails)
+
+                 productDetails.subscriptionOfferDetails?.firstOrNull()?.offerToken?.let { offerToken ->
+                     productDetailsParamsBuilder.setOfferToken(offerToken)
+                 }
+`,
+  `                 val productDetailsParamsBuilder = BillingFlowParams.ProductDetailsParams.newBuilder()
+                     .setProductDetails(productDetails)
+
+                 val eligibleOffers = productDetails.subscriptionOfferDetails.orEmpty()
+                 val selectedOffer = eligibleOffers.firstOrNull()
+                 Log.i(
+                     TAG,
+                     "[BillingDiagnostics] stage=selectOffer productId=$productId " +
+                         "productDetailsReturned=true eligibleOfferReturned=\${eligibleOffers.isNotEmpty()} " +
+                         "eligibleOfferCount=\${eligibleOffers.size} selectedOffer=\${selectedOffer != null} " +
+                         "selectedBasePlanId=\${selectedOffer?.basePlanId ?: "none"} " +
+                         "selectedOfferId=\${selectedOffer?.offerId ?: "base-plan-or-none"}"
+                 )
+                 selectedOffer?.offerToken?.let { offerToken ->
+                     productDetailsParamsBuilder.setOfferToken(offerToken)
+                 }
+`,
+  'Android eligible subscription offer diagnostics'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 val billingResult = billingClient.launchBillingFlow(activity, billingFlowParams)
+
+                 // Check immediate result of launching the flow (doesn't indicate purchase success yet)
+`,
+  `                 val billingResult = billingClient.launchBillingFlow(activity, billingFlowParams)
+                 logBillingResult("launchBillingFlow", billingResult)
+
+                 // Check immediate result of launching the flow (doesn't indicate purchase success yet)
+`,
+  'Android launch billing flow diagnostics'
 );
 
 implementation = replaceRequired(
@@ -348,9 +561,487 @@ implementation = replaceBetween(
   'Android active subscription purchases'
 );
 
+implementation = replaceRequired(
+  implementation,
+  `    private var lastBillingResponseCode: Int? = null
+    private var lastBillingDebugMessage: String? = null
+
+    private fun logBillingResult(stage: String, billingResult: BillingResult) {
+        lastBillingResponseCode = billingResult.responseCode
+        lastBillingDebugMessage = billingResult.debugMessage
+        Log.d(TAG, "[BillingDiagnostics] stage=$stage responseCode=\${billingResult.responseCode} debugMessage=\\\"\${billingResult.debugMessage}\\\"")
+    }
+`,
+  `    private var lastBillingResponseCode: Int? = null
+    private var lastBillingDebugMessage: String? = null
+    private var lastBillingStage = "initializing"
+    private var lastBillingFailedCheck = "none"
+    private var diagnosticRequestedProductIds = emptyList<String>()
+    private var diagnosticReturnedProductIds = emptyList<String>()
+    private var diagnosticProductDetailsReturned = false
+    private var diagnosticEligibleOfferReturned = false
+    private var diagnosticEligibleOfferCount = 0
+    private var diagnosticSelectedBasePlanId = "none"
+    private var diagnosticSelectedOfferId = "none"
+
+    private fun sanitizeDiagnosticText(value: String?): String {
+        if (value.isNullOrBlank()) return "No debug message supplied by Google Play."
+        return value
+            .replace(Regex("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\\\.[A-Z]{2,}", RegexOption.IGNORE_CASE), "[redacted-email]")
+            .replace(Regex("(?i)\\\\b(purchaseToken|token|orderId|accountId|email)\\\\s*[:=]\\\\s*[^\\\\s,;]+"), "$1=[redacted]")
+            .take(500)
+    }
+
+    private fun logBillingResult(stage: String, billingResult: BillingResult) {
+        lastBillingStage = stage
+        lastBillingResponseCode = billingResult.responseCode
+        lastBillingDebugMessage = sanitizeDiagnosticText(billingResult.debugMessage)
+        Log.d(TAG, "[BillingDiagnostics] stage=$stage responseCode=\${billingResult.responseCode} debugMessage=\\\"\${lastBillingDebugMessage}\\\"")
+    }
+`,
+  'Android billing diagnostic snapshot state'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `        logBillingResult("onPurchasesUpdated", billingResult)
+        Log.d(TAG, "[BillingDiagnostics] stage=onPurchasesUpdated purchaseCount=\${purchases?.size ?: 0}")
+`,
+  `        logBillingResult("onPurchasesUpdated", billingResult)
+        lastBillingFailedCheck = if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) "none" else "purchase_update_failed"
+        Log.d(TAG, "[BillingDiagnostics] stage=onPurchasesUpdated purchaseCount=\${purchases?.size ?: 0}")
+`,
+  'Android purchase update failure snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `            override fun onBillingSetupFinished(billingResult: BillingResult) {
+                logBillingResult("onBillingSetupFinished", billingResult)
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+`,
+  `            override fun onBillingSetupFinished(billingResult: BillingResult) {
+                logBillingResult("onBillingSetupFinished", billingResult)
+                lastBillingFailedCheck = if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) "none" else "billing_setup_failed"
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+`,
+  'Android billing setup failure snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `            override fun onBillingServiceDisconnected() {
+                isBillingConnected = false
+                logBillingReadiness("onBillingServiceDisconnected")
+`,
+  `            override fun onBillingServiceDisconnected() {
+                isBillingConnected = false
+                lastBillingStage = "onBillingServiceDisconnected"
+                lastBillingFailedCheck = "billing_service_disconnected"
+                logBillingReadiness("onBillingServiceDisconnected")
+`,
+  'Android billing disconnect failure snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `    fun canMakePurchases(): Boolean {
+        // Check both initialization and connection status
+        val allowed = ::billingClient.isInitialized && billingClient.isReady && isBillingConnected
+        logBillingReadiness("canMakePurchases allowed=$allowed")
+        return allowed
+    }
+`,
+  `    fun canMakePurchases(): Boolean {
+        // Check both initialization and connection status
+        val initialized = ::billingClient.isInitialized
+        val ready = initialized && billingClient.isReady
+        val allowed = initialized && ready && isBillingConnected
+        lastBillingStage = "canMakePurchases"
+        lastBillingFailedCheck = when {
+            !initialized -> "billing_client_not_initialized"
+            !ready -> "billing_client_not_ready"
+            !isBillingConnected -> "billing_service_not_connected"
+            else -> "none"
+        }
+        logBillingReadiness("canMakePurchases allowed=$allowed")
+        return allowed
+    }
+`,
+  'Android can make purchases failure snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `    // Fetch product details
+`,
+  `    fun getBillingDiagnostics(): BillingDiagnosticsSnapshot {
+        val initialized = ::billingClient.isInitialized
+        val ready = initialized && billingClient.isReady
+        return BillingDiagnosticsSnapshot(
+            allowed = initialized && ready && isBillingConnected,
+            billingClientInitialized = initialized,
+            billingClientReady = ready,
+            billingConnected = isBillingConnected,
+            lastStage = lastBillingStage,
+            failedCheck = lastBillingFailedCheck,
+            responseCode = lastBillingResponseCode,
+            debugMessage = sanitizeDiagnosticText(lastBillingDebugMessage),
+            productDetailsReturned = diagnosticProductDetailsReturned,
+            eligibleOfferReturned = diagnosticEligibleOfferReturned,
+            eligibleOfferCount = diagnosticEligibleOfferCount,
+            selectedBasePlanId = diagnosticSelectedBasePlanId,
+            selectedOfferId = diagnosticSelectedOfferId,
+            requestedProductIds = diagnosticRequestedProductIds.toList(),
+            returnedProductIds = diagnosticReturnedProductIds.toList()
+        )
+    }
+
+    fun recordDiagnosticFailure(stage: String, failedCheck: String, debugMessage: String) {
+        lastBillingStage = stage
+        lastBillingFailedCheck = failedCheck
+        lastBillingDebugMessage = sanitizeDiagnosticText(debugMessage)
+    }
+
+    // Fetch product details
+`,
+  'Android billing diagnostic snapshot accessor'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `    fun getProducts(productIds: List<String>, productType: String? = null, callback: (List<ProductDetails>) -> Unit) {
+        ensureConnected(
+`,
+  `    fun getProducts(productIds: List<String>, productType: String? = null, callback: (List<ProductDetails>) -> Unit) {
+        lastBillingStage = "getProducts"
+        lastBillingFailedCheck = "none"
+        diagnosticRequestedProductIds = productIds.toList()
+        diagnosticReturnedProductIds = emptyList()
+        diagnosticProductDetailsReturned = false
+        diagnosticEligibleOfferReturned = false
+        diagnosticEligibleOfferCount = 0
+        diagnosticSelectedBasePlanId = "none"
+        diagnosticSelectedOfferId = "none"
+        ensureConnected(
+`,
+  'Android product query diagnostic reset'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                        callback(this.productDetailsList)
+                    } else {
+                        Log.e(TAG, "Failed to query product details: \${billingResult.debugMessage} (Code: \${billingResult.responseCode})")
+                        this.productDetailsList.clear()
+`,
+  `                        diagnosticReturnedProductIds = this.productDetailsList.map { it.productId }
+                        diagnosticProductDetailsReturned = this.productDetailsList.isNotEmpty()
+                        val eligibleOffers = this.productDetailsList.flatMap { it.subscriptionOfferDetails.orEmpty() }
+                        diagnosticEligibleOfferReturned = eligibleOffers.isNotEmpty()
+                        diagnosticEligibleOfferCount = eligibleOffers.size
+                        lastBillingFailedCheck = when {
+                            this.productDetailsList.isEmpty() -> "product_details_not_returned"
+                            billingProductType == BillingClient.ProductType.SUBS && eligibleOffers.isEmpty() -> "eligible_offer_not_returned"
+                            else -> "none"
+                        }
+                        callback(this.productDetailsList)
+                    } else {
+                        Log.e(TAG, "Failed to query product details: \${billingResult.debugMessage} (Code: \${billingResult.responseCode})")
+                        lastBillingFailedCheck = "product_query_failed"
+                        diagnosticReturnedProductIds = emptyList()
+                        diagnosticProductDetailsReturned = false
+                        diagnosticEligibleOfferReturned = false
+                        diagnosticEligibleOfferCount = 0
+                        this.productDetailsList.clear()
+`,
+  'Android product query result snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `            onFailure = {
+                Log.e(TAG, "Cannot get products: Billing client not ready.")
+                callback(emptyList())
+`,
+  `            onFailure = {
+                lastBillingStage = "getProducts"
+                if (lastBillingFailedCheck == "none") lastBillingFailedCheck = "billing_client_not_ready"
+                Log.e(TAG, "Cannot get products: Billing client not ready.")
+                callback(emptyList())
+`,
+  'Android product query connection failure snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                        )
+                        callback(PurchaseResult(
+                            status = "failed",
+                            errorCode = "ERR_INVALID_PRODUCT_ID",
+`,
+  `                        )
+                        lastBillingStage = "purchaseProduct"
+                        lastBillingFailedCheck = "cached_product_details_missing"
+                        callback(PurchaseResult(
+                            status = "failed",
+                            errorCode = "ERR_INVALID_PRODUCT_ID",
+`,
+  'Android missing cached product failure snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 val eligibleOffers = productDetails.subscriptionOfferDetails.orEmpty()
+                 val selectedOffer = eligibleOffers.firstOrNull()
+                 Log.i(
+`,
+  `                 val eligibleOffers = productDetails.subscriptionOfferDetails.orEmpty()
+                 val selectedOffer = eligibleOffers.firstOrNull()
+                 lastBillingStage = "selectOffer"
+                 diagnosticProductDetailsReturned = true
+                 diagnosticEligibleOfferReturned = eligibleOffers.isNotEmpty()
+                 diagnosticEligibleOfferCount = eligibleOffers.size
+                 diagnosticSelectedBasePlanId = selectedOffer?.basePlanId ?: "none"
+                 diagnosticSelectedOfferId = selectedOffer?.offerId ?: if (selectedOffer != null) "base-plan" else "none"
+                 lastBillingFailedCheck = if (
+                     productDetails.productType == BillingClient.ProductType.SUBS && selectedOffer == null
+                 ) "eligible_offer_not_returned" else "none"
+                 Log.i(
+`,
+  'Android eligible offer selection snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 val billingResult = billingClient.launchBillingFlow(activity, billingFlowParams)
+                 logBillingResult("launchBillingFlow", billingResult)
+
+                 // Check immediate result of launching the flow (doesn't indicate purchase success yet)
+`,
+  `                 val billingResult = billingClient.launchBillingFlow(activity, billingFlowParams)
+                 logBillingResult("launchBillingFlow", billingResult)
+                 lastBillingFailedCheck = if (
+                     billingResult.responseCode == BillingClient.BillingResponseCode.OK
+                 ) "none" else "launch_billing_flow_failed"
+
+                 // Check immediate result of launching the flow (doesn't indicate purchase success yet)
+`,
+  'Android billing flow launch snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `            onFailure = {
+                 Log.e(TAG, "Cannot purchase: Billing client not ready.")
+                 callback(PurchaseResult(
+`,
+  `            onFailure = {
+                 lastBillingStage = "purchaseProduct"
+                 if (lastBillingFailedCheck == "none") lastBillingFailedCheck = "billing_client_not_ready"
+                 Log.e(TAG, "Cannot purchase: Billing client not ready.")
+                 callback(PurchaseResult(
+`,
+  'Android purchase connection failure snapshot'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `    // --- Data Classes for Results ---
+
+    data class PurchaseResult(
+`,
+  `    // --- Data Classes for Results ---
+
+    data class BillingDiagnosticsSnapshot(
+        val allowed: Boolean,
+        val billingClientInitialized: Boolean,
+        val billingClientReady: Boolean,
+        val billingConnected: Boolean,
+        val lastStage: String,
+        val failedCheck: String,
+        val responseCode: Int?,
+        val debugMessage: String,
+        val productDetailsReturned: Boolean,
+        val eligibleOfferReturned: Boolean,
+        val eligibleOfferCount: Int,
+        val selectedBasePlanId: String,
+        val selectedOfferId: String,
+        val requestedProductIds: List<String>,
+        val returnedProductIds: List<String>
+    )
+
+    data class PurchaseResult(
+`,
+  'Android billing diagnostics data class'
+);
+
+if (!implementation.includes('private data class PendingBillingOperation')) {
+  implementation = replaceBetween(
+    implementation,
+    `    private fun connectToBillingService() {
+`,
+    `    fun canMakePurchases(): Boolean {
+`,
+    `    private data class PendingBillingOperation(
+        val onConnected: () -> Unit,
+        val onFailure: () -> Unit
+    )
+
+    private val pendingBillingOperations = mutableListOf<PendingBillingOperation>()
+    private var isBillingConnecting = false
+
+    private fun completePendingBillingOperations(connected: Boolean) {
+        val operations = pendingBillingOperations.toList()
+        pendingBillingOperations.clear()
+        operations.forEach { operation ->
+            try {
+                if (connected) operation.onConnected() else operation.onFailure()
+            } catch (error: Exception) {
+                Log.e(TAG, "Queued billing operation failed after connection completed.", error)
+                if (connected) operation.onFailure()
+            }
+        }
+    }
+
+    private fun connectToBillingService() {
+        if (!::billingClient.isInitialized) {
+            Log.e(TAG, "Billing client not initialized before connecting.")
+            lastBillingStage = "connectToBillingService"
+            lastBillingFailedCheck = "billing_client_not_initialized"
+            completePendingBillingOperations(false)
+            return
+        }
+
+        if (billingClient.isReady) {
+            isBillingConnected = true
+            isBillingConnecting = false
+            completePendingBillingOperations(true)
+            return
+        }
+
+        if (isBillingConnecting) {
+            Log.d(TAG, "BillingClient connection already in progress; operation queued.")
+            return
+        }
+
+        isBillingConnecting = true
+        Log.d(TAG, "Starting BillingClient connection...")
+        try {
+            billingClient.startConnection(object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    isBillingConnecting = false
+                    logBillingResult("onBillingSetupFinished", billingResult)
+                    val connected = billingResult.responseCode == BillingClient.BillingResponseCode.OK
+                    isBillingConnected = connected
+                    lastBillingFailedCheck = if (connected) "none" else "billing_setup_failed"
+
+                    if (connected) {
+                        Log.i(TAG, "Billing Client Setup Finished Successfully.")
+                        completePendingBillingOperations(true)
+                        queryPurchasesAsync()
+                    } else {
+                        Log.e(TAG, "Billing Client Setup Failed: \${billingResult.debugMessage} (Code: \${billingResult.responseCode})")
+                        completePendingBillingOperations(false)
+                    }
+                }
+
+                override fun onBillingServiceDisconnected() {
+                    isBillingConnecting = false
+                    isBillingConnected = false
+                    lastBillingStage = "onBillingServiceDisconnected"
+                    lastBillingFailedCheck = "billing_service_disconnected"
+                    logBillingReadiness("onBillingServiceDisconnected")
+                    Log.w(TAG, "Billing Service Disconnected. The next operation will reconnect.")
+                    completePendingBillingOperations(false)
+                }
+            })
+        } catch (error: Exception) {
+            isBillingConnecting = false
+            isBillingConnected = false
+            lastBillingStage = "connectToBillingService"
+            lastBillingFailedCheck = "billing_connection_exception"
+            lastBillingDebugMessage = sanitizeDiagnosticText(error.message)
+            Log.e(TAG, "BillingClient connection failed before setup completed.", error)
+            completePendingBillingOperations(false)
+        }
+    }
+
+    private fun ensureConnected(onConnected: () -> Unit, onFailure: () -> Unit) {
+        if (::billingClient.isInitialized && billingClient.isReady) {
+            isBillingConnected = true
+            onConnected()
+            return
+        }
+
+        pendingBillingOperations.add(PendingBillingOperation(onConnected, onFailure))
+        connectToBillingService()
+    }
+
+`,
+    'Android asynchronous billing connection queue'
+  );
+}
+
+implementation = replaceRequired(
+  implementation,
+  `        val allowed = initialized && ready && isBillingConnected
+        lastBillingStage = "canMakePurchases"
+        lastBillingFailedCheck = when {
+            !initialized -> "billing_client_not_initialized"
+            !ready -> "billing_client_not_ready"
+            !isBillingConnected -> "billing_service_not_connected"
+            else -> "none"
+        }
+`,
+  `        val allowed = initialized && ready
+        isBillingConnected = allowed
+        lastBillingStage = "canMakePurchases"
+        lastBillingFailedCheck = when {
+            !initialized -> "billing_client_not_initialized"
+            !ready -> "billing_client_not_ready"
+            else -> "none"
+        }
+`,
+  'Android billing readiness source of truth'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 selectedOffer?.offerToken?.let { offerToken ->
+                     productDetailsParamsBuilder.setOfferToken(offerToken)
+                 }
+`,
+  `                 if (productDetails.productType == BillingClient.ProductType.SUBS && selectedOffer == null) {
+                     callback(PurchaseResult(
+                         status = "failed",
+                         errorCode = "NO_ELIGIBLE_SUBSCRIPTION_OFFER",
+                         errorMessage = "Google Play returned the subscription, but no eligible base plan or offer is available for this account."
+                     ))
+                     return@ensureConnected
+                 }
+
+                 selectedOffer?.offerToken?.let { offerToken ->
+                     productDetailsParamsBuilder.setOfferToken(offerToken)
+                 }
+`,
+  'Android missing eligible subscription offer guard'
+);
+
 writeIfChanged(implementationPath, implementation);
 
+
 let plugin = fs.readFileSync(pluginPath, 'utf8');
+
+plugin = replaceRequired(
+  plugin,
+  `import com.getcapacitor.annotation.CapacitorPlugin
+`,
+  `import com.getcapacitor.annotation.CapacitorPlugin
+import org.json.JSONObject
+`,
+  'Android billing diagnostics JSON null import'
+);
 
 plugin = replaceRequired(
   plugin,
@@ -371,6 +1062,47 @@ plugin = replaceRequired(
   '        implementation.getProducts(productIds) { productDetailsList ->\n',
   '        implementation.getProducts(productIds, productType) { productDetailsList ->\n',
   'Android plugin product type pass-through'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        Log.d(TAG, "canMakePurchases called, result: $canMake")
+`,
+  `        Log.d(TAG, "[BillingDiagnostics] bridge=canMakePurchases allowed=$canMake")
+`,
+  'Android plugin purchase availability diagnostics'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `                 Log.d(TAG, "Received \${productDetailsList.size} product details from implementation.")
+                 val products = JSArray()
+`,
+  `                 Log.i(
+                     TAG,
+                     "[BillingDiagnostics] bridge=getProducts productDetailsReturned=\${productDetailsList.isNotEmpty()} " +
+                         "productCount=\${productDetailsList.size} productIds=\${productDetailsList.map { it.productId }}"
+                 )
+                 val products = JSArray()
+`,
+  'Android plugin returned product diagnostics'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `                 productDetailsList.forEach { productDetails ->
+                     val product = JSObject().apply {
+`,
+  `                 productDetailsList.forEach { productDetails ->
+                     val eligibleOffers = productDetails.subscriptionOfferDetails.orEmpty()
+                     Log.i(
+                         TAG,
+                         "[BillingDiagnostics] bridge=getProducts productId=\${productDetails.productId} " +
+                             "eligibleOfferReturned=\${eligibleOffers.isNotEmpty()} eligibleOfferCount=\${eligibleOffers.size}"
+                     )
+                     val product = JSObject().apply {
+`,
+  'Android plugin eligible offer diagnostics'
 );
 
 plugin = replaceRequired(
@@ -414,6 +1146,84 @@ plugin = replaceRequired(
                          }
 `,
   'Android plugin subscription price mapping'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        val currentActivity = activity ?: run {
+            Log.e(TAG, "Activity context is null, cannot launch purchase flow.")
+`,
+  `        val currentActivity = activity ?: run {
+            Log.e(TAG, "[BillingDiagnostics] bridge=purchaseProduct failure=activity_missing BillingResult=unavailable")
+`,
+  'Android plugin missing activity diagnostics'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        Log.d(TAG, "purchaseProduct called for ID: $productId" + if (userId != null) " with userId: $userId" else "" + if (productType != null) " with productType: $productType" else "")
+`,
+  `        Log.d(
+            TAG,
+            "[BillingDiagnostics] bridge=purchaseProduct productId=$productId " +
+                "productType=\${productType ?: "unspecified"} userIdProvided=\${!userId.isNullOrBlank()}"
+        )
+`,
+  'Android plugin purchase request diagnostics'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `    /**
+     * Retrieves product details for the given product IDs.
+`,
+  `    @PluginMethod
+    fun getBillingDiagnostics(call: PluginCall) {
+        val diagnostics = implementation.getBillingDiagnostics()
+        val requestedProductIds = JSArray()
+        diagnostics.requestedProductIds.forEach { requestedProductIds.put(it) }
+        val returnedProductIds = JSArray()
+        diagnostics.returnedProductIds.forEach { returnedProductIds.put(it) }
+
+        call.resolve(JSObject().apply {
+            put("allowed", diagnostics.allowed)
+            put("billingClientInitialized", diagnostics.billingClientInitialized)
+            put("billingClientReady", diagnostics.billingClientReady)
+            put("billingConnected", diagnostics.billingConnected)
+            put("lastStage", diagnostics.lastStage)
+            put("failedCheck", diagnostics.failedCheck)
+            put("responseCode", diagnostics.responseCode ?: JSONObject.NULL)
+            put("debugMessage", diagnostics.debugMessage)
+            put("productDetailsReturned", diagnostics.productDetailsReturned)
+            put("eligibleOfferReturned", diagnostics.eligibleOfferReturned)
+            put("eligibleOfferCount", diagnostics.eligibleOfferCount)
+            put("selectedBasePlanId", diagnostics.selectedBasePlanId)
+            put("selectedOfferId", diagnostics.selectedOfferId)
+            put("requestedProductIds", requestedProductIds)
+            put("returnedProductIds", returnedProductIds)
+        })
+    }
+
+    /**
+     * Retrieves product details for the given product IDs.
+`,
+  'Android billing diagnostics bridge method'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        val currentActivity = activity ?: run {
+            Log.e(TAG, "[BillingDiagnostics] bridge=purchaseProduct failure=activity_missing BillingResult=unavailable")
+`,
+  `        val currentActivity = activity ?: run {
+            implementation.recordDiagnosticFailure(
+                "purchaseProduct",
+                "activity_missing",
+                "Android activity was unavailable; Google Play Billing was not called."
+            )
+            Log.e(TAG, "[BillingDiagnostics] bridge=purchaseProduct failure=activity_missing BillingResult=unavailable")
+`,
+  'Android plugin activity failure snapshot'
 );
 
 writeIfChanged(pluginPath, plugin);
