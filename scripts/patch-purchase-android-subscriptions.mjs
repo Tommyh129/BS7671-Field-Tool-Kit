@@ -29,7 +29,12 @@ const evolvedPatchMarkers = {
   'Android launch billing flow diagnostics': 'launch_billing_flow_failed',
   'Android plugin subscription price mapping': 'val subscriptionOffers = productDetails.subscriptionOfferDetails.orEmpty()',
   'Android plugin purchase request diagnostics': 'offerTokenProvided=',
-  'Android plugin missing activity diagnostics': 'implementation.recordDiagnosticFailure('
+  'Android plugin missing activity diagnostics': 'billing.recordDiagnosticFailure(',
+  'Android plugin product type read': 'val billing = requireBilling(call, "getProducts")',
+  'Android plugin product type pass-through': 'billing.getProducts(productIds, productType)',
+  'Android billing diagnostics bridge method': 'failedCheck", "billing_initialization_failed"',
+  'Android plugin activity failure snapshot': 'billing.recordDiagnosticFailure(',
+  'Android plugin selected offer token pass-through': 'billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken)'
 };
 
 function replaceRequired(content, search, replacement, label) {
@@ -1103,6 +1108,65 @@ let plugin = fs.readFileSync(pluginPath, 'utf8');
 
 plugin = replaceRequired(
   plugin,
+  `    private lateinit var implementation: InAppPurchase
+    private val TAG = "InAppPurchasePlugin" // Tag for plugin-level logging
+
+    /**
+     * Called when the plugin is first loaded.
+     * Initialize the InAppPurchase implementation here.
+     */
+    override fun load() {
+        Log.d(TAG, "Loading InAppPurchasePlugin and initializing implementation.")
+        // Pass the application context
+        implementation = InAppPurchase(context)
+    }
+`,
+  `    private var implementation: InAppPurchase? = null
+    private var initializationError = "Google Play Billing has not been initialized yet."
+    private val TAG = "InAppPurchasePlugin" // Tag for plugin-level logging
+
+    override fun load() {
+        // Keep plugin registration independent from BillingClient startup. If BillingClient
+        // throws while the bridge is loading, Capacitor otherwise omits the whole plugin and
+        // JavaScript can only report that it is "not implemented".
+        Log.d(TAG, "InAppPurchasePlugin registered; BillingClient will initialize on first use.")
+    }
+
+    @Synchronized
+    private fun initializeBilling(): InAppPurchase? {
+        implementation?.let { return it }
+
+        return try {
+            InAppPurchase(context).also {
+                implementation = it
+                initializationError = ""
+                Log.i(TAG, "[BillingDiagnostics] BillingClient initialized on demand.")
+            }
+        } catch (error: Throwable) {
+            val message = error.message?.take(300) ?: "No initialization message was supplied."
+            initializationError = "\${error.javaClass.simpleName}: $message"
+            Log.e(TAG, "[BillingDiagnostics] BillingClient initialization failed: $initializationError", error)
+            null
+        }
+    }
+
+    private fun requireBilling(call: PluginCall, stage: String): InAppPurchase? {
+        val billing = initializeBilling()
+        if (billing == null) {
+            Log.e(TAG, "[BillingDiagnostics] stage=$stage failure=billing_initialization_failed detail=$initializationError")
+            call.reject(
+                "Google Play Billing could not initialize: $initializationError",
+                "ERR_BILLING_INITIALIZATION"
+            )
+        }
+        return billing
+    }
+`,
+  'Android lazy BillingClient initialization'
+);
+
+plugin = replaceRequired(
+  plugin,
   `import com.getcapacitor.annotation.CapacitorPlugin
 `,
   `import com.getcapacitor.annotation.CapacitorPlugin
@@ -1339,6 +1403,156 @@ plugin = replaceRequired(
         implementation.purchaseProduct(currentActivity, productId, userId, productType, offerToken) { result ->
 `,
   'Android plugin selected offer token pass-through'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `    fun canMakePurchases(call: PluginCall) {
+        // Run on background thread pool potentially? Billing checks might involve IPC.
+        // bridge.threadPool.submit { ... } // Consider if needed, though this check is usually fast
+        val canMake = implementation.canMakePurchases()
+`,
+  `    fun canMakePurchases(call: PluginCall) {
+        val billing = requireBilling(call, "canMakePurchases") ?: return
+        // Run on background thread pool potentially? Billing checks might involve IPC.
+        // bridge.threadPool.submit { ... } // Consider if needed, though this check is usually fast
+        val canMake = billing.canMakePurchases()
+`,
+  'Android lazy billing purchase availability'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `    fun getBillingDiagnostics(call: PluginCall) {
+        val diagnostics = implementation.getBillingDiagnostics()
+`,
+  `    fun getBillingDiagnostics(call: PluginCall) {
+        val billing = initializeBilling()
+        if (billing == null) {
+            call.resolve(JSObject().apply {
+                put("allowed", false)
+                put("billingClientInitialized", false)
+                put("billingClientReady", false)
+                put("billingConnected", false)
+                put("lastStage", "initializeBilling")
+                put("failedCheck", "billing_initialization_failed")
+                put("responseCode", JSONObject.NULL)
+                put("debugMessage", initializationError)
+                put("productDetailsReturned", false)
+                put("eligibleOfferReturned", false)
+                put("eligibleOfferCount", 0)
+                put("selectedBasePlanId", "none")
+                put("selectedOfferId", "none")
+                put("requestedProductIds", JSArray())
+                put("returnedProductIds", JSArray())
+            })
+            return
+        }
+
+        val diagnostics = billing.getBillingDiagnostics()
+`,
+  'Android billing initialization diagnostics'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        val productType = call.getString("productType")?.trim()
+        Log.d(TAG, "getProducts called for IDs: $productIds with productType: \${productType ?: "inapp"}")
+`,
+  `        val productType = call.getString("productType")?.trim()
+        val billing = requireBilling(call, "getProducts") ?: return
+        Log.d(TAG, "getProducts called for IDs: $productIds with productType: \${productType ?: "inapp"}")
+`,
+  'Android lazy billing product query'
+);
+
+plugin = replaceRequired(
+  plugin,
+  '        implementation.getProducts(productIds, productType) { productDetailsList ->\n',
+  '        billing.getProducts(productIds, productType) { productDetailsList ->\n',
+  'Android lazy billing product query call'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        val offerToken = call.getString("offerToken")?.trim() // Exact eligible offer returned by getProducts
+
+        // Get the current activity context needed for launching the billing flow UI
+`,
+  `        val offerToken = call.getString("offerToken")?.trim() // Exact eligible offer returned by getProducts
+        val billing = requireBilling(call, "purchaseProduct") ?: return
+
+        // Get the current activity context needed for launching the billing flow UI
+`,
+  'Android lazy billing purchase request'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `            implementation.recordDiagnosticFailure(
+`,
+  `            billing.recordDiagnosticFailure(
+`,
+  'Android lazy billing activity diagnostics'
+);
+
+plugin = replaceRequired(
+  plugin,
+  '        implementation.purchaseProduct(currentActivity, productId, userId, productType, offerToken) { result ->\n',
+  '        billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken) { result ->\n',
+  'Android lazy billing purchase call'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `    fun restorePurchases(call: PluginCall) {
+        Log.d(TAG, "restorePurchases called.")
+`,
+  `    fun restorePurchases(call: PluginCall) {
+        Log.d(TAG, "restorePurchases called.")
+        val billing = requireBilling(call, "restorePurchases") ?: return
+`,
+  'Android lazy billing restore'
+);
+
+plugin = replaceRequired(
+  plugin,
+  '        implementation.restorePurchases { transactionDetailsList ->\n',
+  '        billing.restorePurchases { transactionDetailsList ->\n',
+  'Android lazy billing restore call'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `    fun getActivePurchases(call: PluginCall) {
+        Log.d(TAG, "getActivePurchases called.")
+`,
+  `    fun getActivePurchases(call: PluginCall) {
+        Log.d(TAG, "getActivePurchases called.")
+        val billing = requireBilling(call, "getActivePurchases") ?: return
+`,
+  'Android lazy billing active purchases'
+);
+
+plugin = replaceRequired(
+  plugin,
+  '        implementation.getActivePurchases { transactionDetailsList ->\n',
+  '        billing.getActivePurchases { transactionDetailsList ->\n',
+  'Android lazy billing active purchases call'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        // Ensure implementation is initialized before calling destroy
+        // Use safe call ?. just in case load() failed or was never called.
+        if (::implementation.isInitialized) {
+            implementation.destroy()
+        }
+`,
+  `        implementation?.destroy()
+        implementation = null
+`,
+  'Android nullable billing cleanup'
 );
 
 writeIfChanged(pluginPath, plugin);
