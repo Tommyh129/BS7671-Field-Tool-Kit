@@ -994,6 +994,50 @@ if (!implementation.includes('private data class PendingBillingOperation')) {
 
 implementation = replaceRequired(
   implementation,
+  `    init {
+        initializeBillingClient()
+    }
+`,
+  `    private val pendingBillingOperations = mutableListOf<PendingBillingOperation>()
+    private var isBillingConnecting = false
+
+    init {
+        initializeBillingClient()
+    }
+`,
+  'Android billing connection state initialization order'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `    private data class PendingBillingOperation(
+        val onConnected: () -> Unit,
+        val onFailure: () -> Unit
+    )
+
+    private val pendingBillingOperations = mutableListOf<PendingBillingOperation>()
+    private var isBillingConnecting = false
+
+    private fun completePendingBillingOperations(connected: Boolean) {
+`,
+  `    private data class PendingBillingOperation(
+        val onConnected: () -> Unit,
+        val onFailure: () -> Unit
+    )
+
+    private fun completePendingBillingOperations(connected: Boolean) {
+`,
+  'Android duplicate late billing connection state removal'
+);
+
+const connectionStateIndex = implementation.indexOf('private val pendingBillingOperations');
+const billingInitializationIndex = implementation.indexOf('init {\n        initializeBillingClient()');
+if (connectionStateIndex === -1 || billingInitializationIndex === -1 || connectionStateIndex > billingInitializationIndex) {
+  throw new Error('Android billing connection state must be initialized before BillingClient startup.');
+}
+
+implementation = replaceRequired(
+  implementation,
   `        val allowed = initialized && ready && isBillingConnected
         lastBillingStage = "canMakePurchases"
         lastBillingFailedCheck = when {
