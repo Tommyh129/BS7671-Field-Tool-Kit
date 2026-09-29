@@ -3,6 +3,8 @@ build/
 dist/
 coverage/
 android/.gradle-cache/
+android/.gradle-user-home/
+android/.android-user-home/
 android/.idea/
 .DS_Store
 *.log

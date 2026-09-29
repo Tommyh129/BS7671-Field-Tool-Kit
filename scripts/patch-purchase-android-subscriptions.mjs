@@ -24,7 +24,11 @@ const evolvedPatchMarkers = {
   'Android can make purchases failure snapshot': 'private data class PendingBillingOperation',
   'Android returned product and eligible offer diagnostics': 'diagnosticReturnedProductIds = this.productDetailsList.map',
   'Android eligible subscription offer diagnostics': 'diagnosticSelectedBasePlanId = selectedOffer?.basePlanId',
+  'Android eligible offer selection snapshot': 'lastBillingStage = "selectOffer"',
+  'Android missing eligible subscription offer guard': 'REQUESTED_SUBSCRIPTION_OFFER_UNAVAILABLE',
   'Android launch billing flow diagnostics': 'launch_billing_flow_failed',
+  'Android plugin subscription price mapping': 'val subscriptionOffers = productDetails.subscriptionOfferDetails.orEmpty()',
+  'Android plugin purchase request diagnostics': 'offerTokenProvided=',
   'Android plugin missing activity diagnostics': 'implementation.recordDiagnosticFailure('
 };
 
@@ -1028,6 +1032,70 @@ implementation = replaceRequired(
   'Android missing eligible subscription offer guard'
 );
 
+implementation = replaceRequired(
+  implementation,
+  '    fun purchaseProduct(activity: Activity, productId: String, userId: String? = null, productType: String? = null, callback: (PurchaseResult) -> Unit) {\n',
+  '    fun purchaseProduct(activity: Activity, productId: String, userId: String? = null, productType: String? = null, offerToken: String? = null, callback: (PurchaseResult) -> Unit) {\n',
+  'Android purchase selected offer token parameter'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 val eligibleOffers = productDetails.subscriptionOfferDetails.orEmpty()
+                 val selectedOffer = eligibleOffers.firstOrNull()
+`,
+  `                 val eligibleOffers = productDetails.subscriptionOfferDetails.orEmpty()
+                 val selectedOffer = if (!offerToken.isNullOrBlank()) {
+                     eligibleOffers.firstOrNull { it.offerToken == offerToken }
+                 } else {
+                     eligibleOffers.firstOrNull { offer ->
+                         offer.pricingPhases.pricingPhaseList.firstOrNull()?.priceAmountMicros == 0L
+                     } ?: eligibleOffers.firstOrNull()
+                 }
+`,
+  'Android exact purchase offer selection'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 lastBillingFailedCheck = if (
+                     productDetails.productType == BillingClient.ProductType.SUBS && selectedOffer == null
+                 ) "eligible_offer_not_returned" else "none"
+`,
+  `                 lastBillingFailedCheck = when {
+                     productDetails.productType != BillingClient.ProductType.SUBS -> "none"
+                     !offerToken.isNullOrBlank() && selectedOffer == null -> "requested_offer_not_returned"
+                     selectedOffer == null -> "eligible_offer_not_returned"
+                     else -> "none"
+                 }
+`,
+  'Android selected offer failure diagnostics'
+);
+
+implementation = replaceRequired(
+  implementation,
+  `                 if (productDetails.productType == BillingClient.ProductType.SUBS && selectedOffer == null) {
+                     callback(PurchaseResult(
+                         status = "failed",
+                         errorCode = "NO_ELIGIBLE_SUBSCRIPTION_OFFER",
+                         errorMessage = "Google Play returned the subscription, but no eligible base plan or offer is available for this account."
+                     ))
+`,
+  `                 if (productDetails.productType == BillingClient.ProductType.SUBS && selectedOffer == null) {
+                     val requestedOfferMissing = !offerToken.isNullOrBlank()
+                     callback(PurchaseResult(
+                         status = "failed",
+                         errorCode = if (requestedOfferMissing) "REQUESTED_SUBSCRIPTION_OFFER_UNAVAILABLE" else "NO_ELIGIBLE_SUBSCRIPTION_OFFER",
+                         errorMessage = if (requestedOfferMissing) {
+                             "The subscription offer returned by Google Play is no longer eligible. Refresh the subscription and try again."
+                         } else {
+                             "Google Play returned the subscription, but no eligible base plan or offer is available for this account."
+                         }
+                     ))
+`,
+  'Android requested offer unavailable message'
+);
+
 writeIfChanged(implementationPath, implementation);
 
 
@@ -1224,6 +1292,53 @@ plugin = replaceRequired(
             Log.e(TAG, "[BillingDiagnostics] bridge=purchaseProduct failure=activity_missing BillingResult=unavailable")
 `,
   'Android plugin activity failure snapshot'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `                             val subscriptionOffer = productDetails.subscriptionOfferDetails?.firstOrNull()
+`,
+  `                             val subscriptionOffers = productDetails.subscriptionOfferDetails.orEmpty()
+                             val subscriptionOffer = subscriptionOffers.firstOrNull { offer ->
+                                 offer.pricingPhases.pricingPhaseList.firstOrNull()?.priceAmountMicros == 0L
+                             } ?: subscriptionOffers.firstOrNull()
+`,
+  'Android free trial offer preference'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        val userId = call.getString("userId")?.trim() // Get optional userId
+        val productType = call.getString("productType")?.trim() // Get optional productType
+`,
+  `        val userId = call.getString("userId")?.trim() // Get optional userId
+        val productType = call.getString("productType")?.trim() // Get optional productType
+        val offerToken = call.getString("offerToken")?.trim() // Exact eligible offer returned by getProducts
+`,
+  'Android plugin selected offer token read'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `            "[BillingDiagnostics] bridge=purchaseProduct productId=$productId " +
+                "productType=\${productType ?: "unspecified"} userIdProvided=\${!userId.isNullOrBlank()}"
+`,
+  `            "[BillingDiagnostics] bridge=purchaseProduct productId=$productId " +
+                "productType=\${productType ?: "unspecified"} userIdProvided=\${!userId.isNullOrBlank()} " +
+                "offerTokenProvided=\${!offerToken.isNullOrBlank()}"
+`,
+  'Android plugin selected offer diagnostics'
+);
+
+plugin = replaceRequired(
+  plugin,
+  `        // Call the implementation method, passing the activity, userId, productType and a callback lambda
+        implementation.purchaseProduct(currentActivity, productId, userId, productType) { result ->
+`,
+  `        // Call the implementation method with the exact eligible offer returned to JavaScript.
+        implementation.purchaseProduct(currentActivity, productId, userId, productType, offerToken) { result ->
+`,
+  'Android plugin selected offer token pass-through'
 );
 
 writeIfChanged(pluginPath, plugin);

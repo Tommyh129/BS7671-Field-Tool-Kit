@@ -1046,7 +1046,7 @@ export default function App() {
   };
 
   const readAndroidBillingDiagnostics = async (context: string) => {
-    if (!ANDROID_BILLING_DIAGNOSTICS_ENABLED || Capacitor.getPlatform() !== 'android') {
+    if (Capacitor.getPlatform() !== 'android') {
       return null;
     }
 
@@ -1212,8 +1212,9 @@ export default function App() {
         const transaction = await InAppPurchase.purchaseProduct({
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
+          ...(purchasePlatform === 'android' && offerToken ? { offerToken } : {}),
           ...nativePurchaseUserOptions(purchaseUser?.uid)
-        }) as any;
+        } as any) as any;
         console.info('[BillingDiagnostics] Native purchase call completed', {
           productId: product.productId,
           status: transaction?.status,
@@ -1242,13 +1243,18 @@ export default function App() {
         } catch (restoreError) {
           console.error("App: Failed to re-check purchases after purchase error", restoreError);
         }
-        if (failedAttemptDiagnostics) {
+        if (failedAttemptDiagnostics && ANDROID_BILLING_DIAGNOSTICS_ENABLED) {
           setBillingDiagnostics(failedAttemptDiagnostics);
           setBillingDiagnosticsCopyStatus('idle');
           setShowBillingDiagnostics(true);
         }
         const failureMessage = String(error?.message || 'Unknown error').trim().replace(/[.\s]+$/, '');
-        alert(`Purchase failed: ${failureMessage}. Please try again.`);
+        const billingResponse = failedAttemptDiagnostics?.responseCode;
+        const billingStage = failedAttemptDiagnostics?.lastStage;
+        const billingDetail = billingResponse === null || billingResponse === undefined
+          ? ''
+          : ` Google Play response: ${billingResponse}${billingStage ? ` at ${billingStage}` : ''}.`;
+        alert(`Purchase failed: ${failureMessage}.${billingDetail} Please try again.`);
       } finally {
         setIsUpgrading(false);
       }
