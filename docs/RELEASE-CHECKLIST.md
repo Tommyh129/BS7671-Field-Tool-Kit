@@ -51,7 +51,7 @@ Local code is the source of truth. No push or release is authorised by this chec
 2. [x] Termly: Privacy/terms and data-processing documentation completed, as confirmed by user. Published privacy/terms links are app defaults; verify the separate data-processing link integration below without treating the documentation itself as unfinished.
 3. [x] Apple: Business/Pro subscription ordering completed, confirmed by user. Actual replacements, subscription review status and organisation-sales eligibility still require the external testing/review steps below.
 4. [x] Codex: Bump to 1.1.2 / local build 27, build web/server and sync/verify Android and iOS assets in the existing project folders. No signed AAB/IPA has been built locally.
-5. [ ] GitHub: Commit and push all checked release source, new scripts/rules and native changes to main; record the release commit. Do not commit credentials or private licence manifests.
+5. [x] GitHub: Release source committed and pushed to Tommyh129/BS7671-Field-Tool-Kit, main, on 28 October 2026. Release source commit: ce6534c (Prepare 1.1.2 Business release, calculations and privacy safeguards). Android's ignored generated release assets were explicitly included; credentials/private licence manifests were excluded. This does not confirm a Cloud Run deployment or store upload.
 6. [ ] AI Studio: Pull that same GitHub commit and confirm it is current; do not redeploy an older AI Studio copy over these changes.
 7. [ ] Cloud Run: Configure/verify Apple IAP credentials, Play verification permissions/flag, Firebase access, legacy Stripe settings and production URLs, then deploy the updated backend. Verify health and subscription-readiness endpoints. See docs/STORE-REVIEW-NOTES.md.
 8. [ ] Firebase: Deploy the latest Firestore and Storage rules together with the backend. Rules changed again for server-only Pro grants and invoiced Business access. Test account isolation, profile creation, project sync/uploads, licence expiry/revocation and denial of self-granted access; earlier rule deployments do not cover this release.
@@ -71,4 +71,4 @@ Local code is the source of truth. No push or release is authorised by this chec
 ## Deployment
 
 - Existing service URL: https://the-sparkys-mate-29962838005.europe-west1.run.app
-- Latest local changes have not been confirmed pushed or deployed.
+- Release source ce6534c pushed to GitHub main on 28 October 2026. Cloud Run deployment, AI Studio sync and native store uploads have not been verified or performed as part of this push task.
