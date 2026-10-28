@@ -1,11 +1,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Ruler, Share2, Activity, AlertTriangle, CheckCircle2, History as HistoryIcon, Check } from 'lucide-react';
-import { DeviceType, CableType } from '../types';
-import { DEVICE_LIMITS, CABLE_DATABASE, VOLTAGES } from '../constants';
-import { getCircuitR1R2MilliOhmsPerMetre } from '../utils/resistance';
+import { DeviceType, CableType, InstallationMethod, SupplyType, CircuitType } from '../types';
+import { calculateCircuit, CircuitOptions } from '../utils/calculations';
+import { calculateMaxLength } from '../utils/maxLength';
+import CableDesignControls from './CableDesignControls';
+import RecalculateButton from './RecalculateButton';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import { getDeviceRatings, getSourceIdsForTool, formatSourceNotes, getCableRows, getInstallationIssue, INSTALLATION_ENTRIES } from '../data/electrical';
+import SourceNotes from './SourceNotes';
 
 interface MaxLengthCalculatorProps {
   onShare: (text: string) => void;
@@ -22,54 +26,39 @@ export default function MaxLengthCalculator({ onShare }: MaxLengthCalculatorProp
   const [enteredLength, setEnteredLength] = useState<string>('');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const lastSavedHistoryRef = React.useRef<string | null>(null);
+  const sourceIds = getSourceIdsForTool('MAX_LENGTH', cableType);
 
-  const calculation = useMemo(() => {
-    const zeVal = parseFloat(ze) || 0;
-    const sizeVal = parseFloat(cableSize);
-    const vdLimit = parseFloat(allowedVD) || 5;
-    const loadVal = parseFloat(loadAmps) || 0;
-    const lengthVal = parseFloat(enteredLength) || 0;
-
-    // Find mV/A/m for the cable size
-    const cableData = CABLE_DATABASE[cableType]?.find(c => c.size === sizeVal);
-    const mvAm = cableData?.mvAm || 18; // Default to 2.5mm2 value if not found
-
-    // Find Zs limit
-    const zsLimit = DEVICE_LIMITS[deviceType][rating] || 0;
-
-    const r1r2PerMetre = getCircuitR1R2MilliOhmsPerMetre(cableType, sizeVal);
-    const designR1R2PerMetre = r1r2PerMetre ? r1r2PerMetre * 1.2 : Number.POSITIVE_INFINITY;
-
-    // Max length for Zs
-    const maxLenZs = Math.max(0, (zsLimit - zeVal) / (designR1R2PerMetre / 1000));
-
-    // Max length for Voltage Drop
-    // VD = (mV/A/m * I * L) / 1000
-    // L = (VD_limit * 1000) / (mV/A/m * I)
-    const vdLimitVolts = (vdLimit / 100) * VOLTAGES.SINGLE_PHASE;
-    const maxLenVD = loadVal > 0 && mvAm > 0
-      ? (vdLimitVolts * 1000) / (mvAm * loadVal)
-      : Number.POSITIVE_INFINITY;
-
-    const maxLen = Math.min(maxLenZs, maxLenVD);
-    const isCompliant = lengthVal > 0 ? lengthVal <= maxLen : true;
-
-    return {
-      maxLen,
-      maxLenZs,
-      maxLenVD,
-      isCompliant,
-      limitingFactor: maxLenZs < maxLenVD ? 'Zs Limit' : 'Voltage Drop'
-    };
-  }, [deviceType, rating, cableType, cableSize, ze, allowedVD, loadAmps, enteredLength]);
+  const [method, setMethod] = useState(InstallationMethod.METHOD_C);
+  const [supply, setSupply] = useState(SupplyType.SINGLE_PHASE);
+  const [options, setOptions] = useState<CircuitOptions>({ operatingTemperature:70, cpcArrangement:'separate', autoSizeSeparateCpc:true });
+  useEffect(() => { if (getInstallationIssue(cableType,method)) setMethod(InstallationMethod.METHOD_C); },[cableType,method]);
+  const rows = getCableRows(cableType,method,supply,options.operatingTemperature);
+  const calculation = useMemo(() => calculateMaxLength(
+    cableType, Number(cableSize), method, supply, deviceType, rating,
+    ze.trim() === '' ? NaN : Number(ze), Number(loadAmps), Number(allowedVD),
+    enteredLength.trim() === '' ? undefined : Number(enteredLength), options
+  ),[cableType,cableSize,method,supply,deviceType,rating,ze,loadAmps,allowedVD,enteredLength,options]);
+  const inputs = { deviceType,rating,cableType,cableSize,ze,allowedVD,loadAmps,enteredLength,method,supply,...options };
+  const recalculate = () => {
+    if (ze.trim() === '') return;
+    const current = Number(loadAmps);
+    const kw = current * (supply === SupplyType.SINGLE_PHASE ? 230 : Math.sqrt(3)*400*.9)/1000;
+    const design = calculateCircuit(kw,enteredLength.trim() === '' ? 1 : Number(enteredLength),supply,method,cableType,
+      allowedVD === '3' ? CircuitType.LIGHTING : CircuitType.OTHER,30,1,Number(ze),deviceType,rating,options);
+    if (design?.isCompliant) setCableSize(String(design.cableSize));
+  };
 
   const handleShare = () => {
+    if (calculation.error) return;
     const text = `
 📏 MAX CABLE LENGTH CALCULATION 📏
 -------------------------
 Device: ${deviceType} ${rating}A
 Cable Type: ${cableType}
 Cable Size: ${cableSize}mm²
+CPC: ${calculation.cpcSize}mm2 (${calculation.cpcArrangement})
+Method: ${INSTALLATION_ENTRIES.find(entry => entry.id === method)?.label}
+Supply: ${supply}
 Ze: ${ze} Ω
 Load: ${loadAmps} A
 Allowed VD: ${allowedVD}%
@@ -86,19 +75,19 @@ Summary: The maximum cable length for this circuit is ${calculation.maxLen.toFix
 -------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, calculation.assumptions)}`);
   };
 
   const handleSaveHistory = async () => {
-    if (isSavingHistory) return;
+    if (isSavingHistory || calculation.error) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
         auth.currentUser?.uid,
         'max_length',
         `Max Length: ${deviceType} ${rating}A / ${cableType} ${cableSize}mm²`,
-        { deviceType, cableType, rating, cableSize, ze, allowedVD, loadAmps, enteredLength },
-        { maxLen: calculation.maxLen, limitingFactor: calculation.limitingFactor, isCompliant: calculation.isCompliant }
+        inputs,
+        calculation
       );
       setTimeout(() => setIsSavingHistory(false), 2000);
     } catch (error) {
@@ -108,13 +97,13 @@ Calculated via The Sparkys Mate
   };
 
   useEffect(() => {
-    if (!Number.isFinite(calculation.maxLen) || calculation.maxLen <= 0) return;
+    if (calculation.error || !Number.isFinite(calculation.maxLen) || calculation.maxLen <= 0) return;
 
     const payload = {
       type: 'max_length' as const,
       title: `Max Length: ${deviceType} ${rating}A / ${cableType} ${cableSize}mm²`,
-      inputs: { deviceType, cableType, rating, cableSize, ze, allowedVD, loadAmps, enteredLength },
-      results: { maxLen: calculation.maxLen, limitingFactor: calculation.limitingFactor, isCompliant: calculation.isCompliant }
+      inputs,
+      results: calculation
     };
     const signature = JSON.stringify(payload);
     if (lastSavedHistoryRef.current === signature) return;
@@ -123,10 +112,12 @@ Calculated via The Sparkys Mate
     saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
       console.error('Error auto-saving max length history:', error);
     });
-  }, [calculation, deviceType, rating, cableType, cableSize, ze, allowedVD, loadAmps, enteredLength]);
+  }, [calculation, deviceType, rating, cableType, cableSize, ze, allowedVD, loadAmps, enteredLength, method, supply, options]);
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} />
+      {calculation.error && <p role="alert" className="text-xs text-red-400">{calculation.error}</p>}
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4">
@@ -164,7 +155,8 @@ Calculated via The Sparkys Mate
                 onChange={(e) => setRating(parseInt(e.target.value))}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
               >
-                {Object.keys(DEVICE_LIMITS[deviceType]).map(Number).sort((a, b) => a - b).map(r => (
+                {!getDeviceRatings(deviceType).includes(rating) && <option value={rating} disabled>{rating} A - no recorded limit</option>}
+                {getDeviceRatings(deviceType).map(r => (
                   <option key={r} value={r}>{r}A</option>
                 ))}
               </select>
@@ -179,7 +171,8 @@ Calculated via The Sparkys Mate
                 onChange={(e) => setCableSize(e.target.value)}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
               >
-                {[...CABLE_DATABASE[cableType]].sort((a, b) => a.size - b.size).map(c => (
+                {!rows.some(c => c.size === Number(cableSize)) && <option value={cableSize} disabled>{cableSize} mm2 - no recorded row</option>}
+                {rows.map(c => (
                   <option key={c.size} value={c.size}>{c.size}mm²</option>
                 ))}
               </select>
@@ -218,6 +211,17 @@ Calculated via The Sparkys Mate
             </div>
           </div>
 
+          <label className="block text-xs text-gray-500">Supply Phase
+            <select aria-label="Supply Phase" value={supply} onChange={e => setSupply(e.target.value as SupplyType)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-2xl p-4 text-white">
+              {Object.values(SupplyType).map(type => <option key={type} value={type}>{type}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs text-gray-500">Installation Method
+            <select aria-label="Installation Method" value={method} onChange={e => setMethod(e.target.value as InstallationMethod)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-2xl p-4 text-white">
+              {INSTALLATION_ENTRIES.filter(entry => !getInstallationIssue(cableType,entry.id)).map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+            </select>
+          </label>
+          <CableDesignControls cable={cableType} value={options} onChange={setOptions} />
           <div>
             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Circuit Length (m) - Optional</label>
             <input 
@@ -231,7 +235,10 @@ Calculated via The Sparkys Mate
         </div>
       </div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+      <RecalculateButton inputKey={JSON.stringify(inputs)} onRecalculate={recalculate} message={calculation.error ?? (calculation.isCompliant ? `Recalculated: ${cableSize}mm2 line / ${calculation.cpcSize}mm2 CPC; maximum ${calculation.maxLen.toFixed(1)}m.` : `No passing design: ${calculation.limitingFactor}.`)} />
+      {!calculation.error && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+        <SourceNotes ids={sourceIds} assumptions={calculation.assumptions} />
+        <p className="text-xs text-gray-400">{cableSize}mm2 line / {calculation.cpcSize}mm2 copper CPC; {calculation.cpcArrangement}; armour not counted.</p>
         <div className={`p-6 rounded-3xl border ${calculation.isCompliant ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
@@ -269,7 +276,7 @@ Calculated via The Sparkys Mate
               <div className="flex gap-3">
                 <AlertTriangle className="text-red-500 shrink-0" size={18} />
                 <p className="text-xs text-red-200 leading-relaxed">
-                  The entered length of {enteredLength}m exceeds the maximum permitted length of {calculation.maxLen.toFixed(1)}m.
+                  The selected circuit fails the recorded {calculation.limitingFactor} check. Review the entered length, conductor, CPC and device rating.
                 </p>
               </div>
             </div>
@@ -282,10 +289,10 @@ Calculated via The Sparkys Mate
               <h4 className="text-[10px] font-extrabold uppercase text-gray-300 tracking-wider">Zs Temperature Correction & 80% Rule</h4>
             </div>
             <p className="text-[11px] text-gray-400 leading-relaxed font-sans font-medium">
-              To calculate the maximum cable length limited by Earth fault loop impedance (<span className="text-white font-mono">Zs</span>), the cable resistance is automatically corrected using a <span className="text-emerald-500 font-bold">1.2 multiplier</span>. This accounts for conductor temperature rise from 20°C (testing) to 70°C (full load).
+              This design estimate applies a <span className="text-emerald-500 font-bold">{cableType === CableType.XLPE_SWA && options.operatingTemperature === 90 ? '1.28' : '1.2'} multiplier</span> to circuit conductor resistance only, leaving Ze unchanged. This is an approximate temperature allowance, not a complete loop-impedance or fault-withstand assessment.
             </p>
             <p className="text-[10px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded-xl border border-hardware-border/20 font-sans">
-              * On-Site Verification: Standard tabulated Zs limits are for hot (70°C) cables. When verifying loop impedance on-site using a tester at ambient temperature (20°C), compare your measured Zs with <span className="text-white font-bold">80% of the tabulated limit</span> (0.8 factor) to ensure compliance.
+              * Field testing uses a separate <span className="text-white font-bold">80% design-limit comparison</span> as a quick check. It is not equivalent to the 1.2 resistance estimate. Refer to the source notes and installation-specific detailed calculation.
             </p>
           </div>
 
@@ -307,7 +314,7 @@ Calculated via The Sparkys Mate
             </button>
           </div>
         </div>
-      </motion.div>
+      </motion.div>}
     </div>
   );
 }

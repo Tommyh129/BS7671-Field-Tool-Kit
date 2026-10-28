@@ -22,6 +22,13 @@ import { SupplySystem, DeviceType } from '../types';
 import { CABLE_RESISTANCE, DEVICE_LIMITS } from '../constants';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import { getDeviceRatings, formatSourceNotes, DESIGN_RESISTANCE_MULTIPLIER, FIELD_TEST_LIMIT_MULTIPLIER } from '../data/electrical';
+import SourceNotes from './SourceNotes';
+import { InspectionCpcControl } from './CableDesignControls';
+import RecalculateButton from './RecalculateButton';
+import { InspectionCpcModel, resolveInspectionCpcSize } from '../utils/resistance';
+
+const sourceIds = ['protection', 'resistance-copper', 'temperature', 'cpc'];
 
 interface ZsCalculatorProps {
   onShare: (text: string) => void;
@@ -31,13 +38,17 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
   const [supplySystem, setSupplySystem] = useState<SupplySystem>(SupplySystem.TN_C_S);
   const [ze, setZe] = useState<string>('0.35');
   const [phaseSize, setPhaseSize] = useState<string>('2.5');
-  const [cpcSize, setCpcSize] = useState<string>('1.5');
+  const [manualCpcSize, setCpcSize] = useState<string>('1.5');
+  const [cpcModel, setCpcModel] = useState<InspectionCpcModel>('manual');
   const [resistance, setResistance] = useState<string>('19.51');
   const [cableLength, setCableLength] = useState<string>('');
   const [useTotalResistance, setUseTotalResistance] = useState(false);
   const [totalResistance, setTotalResistance] = useState<string>('');
   const [deviceType, setDeviceType] = useState<DeviceType>(DeviceType.MCB_B);
   const [protectiveDevice, setProtectiveDevice] = useState<number>(32);
+  const cpcSize = useTotalResistance || cpcModel === 'manual' ? manualCpcSize : String(resolveInspectionCpcSize(cpcModel,Number(phaseSize),Number(manualCpcSize),{
+    lengthM:Number(cableLength),ze:ze === '' ? NaN : Number(ze),maxZs:DEVICE_LIMITS[deviceType][protectiveDevice],resistanceMultiplier:DESIGN_RESISTANCE_MULTIPLIER,
+  }) ?? '');
   const [showResult, setShowResult] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
@@ -49,14 +60,6 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
   const pdfRef = React.useRef<HTMLDivElement>(null);
   const lastSavedHistoryRef = React.useRef<string | null>(null);
 
-  // Reset protective device rating when type changes
-  useEffect(() => {
-    const availableRatings = Object.keys(DEVICE_LIMITS[deviceType]).map(Number);
-    if (!availableRatings.includes(protectiveDevice)) {
-      setProtectiveDevice(availableRatings[0]);
-    }
-  }, [deviceType]);
-
   // Update resistance when cable size changes
   useEffect(() => {
     const phase = parseFloat(phaseSize);
@@ -65,13 +68,15 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
     if (CABLE_RESISTANCE[phase] && CABLE_RESISTANCE[cpc]) {
       const totalResistanceMilliOhms = CABLE_RESISTANCE[phase] + CABLE_RESISTANCE[cpc];
       setResistance(totalResistanceMilliOhms.toFixed(3));
-    }
+    } else setResistance('');
   }, [phaseSize, cpcSize]);
 
   const calculation = useMemo(() => {
     const zeVal = parseFloat(ze) || 0;
     const lengthVal = parseFloat(cableLength) || 0;
-    const resistanceMilliOhms = parseFloat(resistance) || 0;
+    const resistanceMilliOhms = cpcModel !== 'manual' && !useTotalResistance
+      ? (CABLE_RESISTANCE[Number(phaseSize)] ?? NaN) + (CABLE_RESISTANCE[Number(cpcSize)] ?? NaN)
+      : parseFloat(resistance) || 0;
     
     // Raw R1+R2 at 20°C (ambient testing temperature)
     let rawR1R2 = 0;
@@ -81,17 +86,18 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
       rawR1R2 = (resistanceMilliOhms * lengthVal) / 1000;
     }
 
-    // Apply 1.2 factor for conductor temperature rise (20°C to 70°C) as per BS 7671 Appendix 14
-    const r1r2 = rawR1R2 * 1.2;
+    const r1r2 = rawR1R2 * DESIGN_RESISTANCE_MULTIPLIER;
 
     const zs = zeVal + r1r2;
     const coldZs = zeVal + rawR1R2;
     const maxZs = DEVICE_LIMITS[deviceType][protectiveDevice] || 0;
-    const maxZs80 = maxZs * 0.8;
-    const isCompliant = zs <= maxZs;
-    const isColdZsCompliant = coldZs <= maxZs80;
+    const maxZs80 = maxZs * FIELD_TEST_LIMIT_MULTIPLIER;
+    const isValid = Number.isFinite(Number(ze)) && Number(ze) >= 0 && ze !== '' && maxZs > 0 && (useTotalResistance ? totalResistance !== '' && Number.isFinite(Number(totalResistance)) && Number(totalResistance) >= 0 : Number.isFinite(lengthVal) && lengthVal > 0 && Number.isFinite(resistanceMilliOhms) && resistanceMilliOhms > 0);
+    const isCompliant = isValid && zs <= maxZs;
+    const isColdZsCompliant = isValid && coldZs <= maxZs80;
 
     return {
+      isValid,
       zs,
       coldZs,
       maxZs,
@@ -101,9 +107,10 @@ export default function ZsCalculator({ onShare }: ZsCalculatorProps) {
       r1r2,
       rawR1R2
     };
-  }, [ze, resistance, cableLength, deviceType, protectiveDevice, useTotalResistance, totalResistance]);
+  }, [ze, resistance, cableLength, deviceType, protectiveDevice, useTotalResistance, totalResistance, cpcModel, phaseSize, cpcSize]);
 
   const handleShare = () => {
+    if (!calculation.isValid) return;
     const text = `
 ⚡ Zs CALCULATION RESULT ⚡
 -------------------------
@@ -119,12 +126,12 @@ Max Permitted: ${calculation.maxZs.toFixed(2)} Ω
 Status: ${calculation.isCompliant ? '✅ PASS' : '❌ FAIL'}
 
 Explanation: ${calculation.isCompliant 
-  ? `The calculated Zs of ${calculation.zs.toFixed(2)}Ω is within the maximum permitted limit of ${calculation.maxZs.toFixed(2)}Ω for a ${deviceType} ${protectiveDevice}A. Disconnection time requirements are met.`
-  : `The calculated Zs of ${calculation.zs.toFixed(2)}Ω exceeds the maximum permitted limit of ${calculation.maxZs.toFixed(2)}Ω. Disconnection time requirements are NOT met.`}
+  ? `Calculated design Zs ${calculation.zs.toFixed(2)}Ω is within the recorded legacy limit ${calculation.maxZs.toFixed(2)}Ω. Source applicability and disconnection conditions remain unverified.`
+  : `Calculated design Zs ${calculation.zs.toFixed(2)}Ω exceeds the recorded legacy limit ${calculation.maxZs.toFixed(2)}Ω. Review the circuit and source data.`}
 -------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, [`CPC model: ${useTotalResistance ? 'measured total R1+R2; no conductor sizing' : cpcModel}; recorded sizes ${phaseSize}/${cpcSize}mm2.`, 'Design Zs = Ze + 1.2 x circuit R1+R2 only. Field-test comparison uses a separate 0.8 x design limit; these are not equivalent checks.'])}`);
   };
 
   const handleDownloadImage = async () => {
@@ -154,13 +161,14 @@ Calculated via The Sparkys Mate
         backgroundColor: '#ffffff',
       });
       
+      const reportHeight = Math.max(600, 400 * pdfRef.current.scrollHeight / pdfRef.current.offsetWidth);
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'px',
-        format: [400, 600]
+        format: [400, reportHeight]
       });
       
-      pdf.addImage(dataUrl, 'PNG', 0, 0, 400, 600);
+      pdf.addImage(dataUrl, 'PNG', 0, 0, 400, reportHeight);
       const pdfDataUrl = pdf.output('datauristring');
       
       await downloadFile(pdfDataUrl, `bs7671-zs-report-${Date.now()}.pdf`, 'application/pdf');
@@ -173,14 +181,14 @@ Calculated via The Sparkys Mate
   };
 
   const handleSaveHistory = async () => {
-    if (isSavingHistory) return;
+    if (isSavingHistory || !calculation.isValid) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
         auth.currentUser?.uid,
         'zs',
         `Zs: ${deviceType} ${protectiveDevice}A`,
-        { supplySystem, ze, cableSize: `${phaseSize}/${cpcSize}`, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice },
+        { supplySystem, ze, cableSize: `${phaseSize}/${cpcSize}`, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice, cpcModel: useTotalResistance ? 'measured-total' : cpcModel },
         { zs: calculation.zs, maxZs: calculation.maxZs, isCompliant: calculation.isCompliant }
       );
       // Show success state
@@ -193,12 +201,12 @@ Calculated via The Sparkys Mate
 
   useEffect(() => {
     const hasInput = useTotalResistance ? parseFloat(totalResistance) > 0 : parseFloat(cableLength) > 0;
-    if (!hasInput) return;
+    if (!hasInput || !calculation.isValid) return;
 
     const payload = {
       type: 'zs' as const,
       title: `Zs: ${deviceType} ${protectiveDevice}A`,
-      inputs: { supplySystem, ze, cableSize: `${phaseSize}/${cpcSize}`, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice },
+      inputs: { supplySystem, ze, cableSize: `${phaseSize}/${cpcSize}`, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice, cpcModel: useTotalResistance ? 'measured-total' : cpcModel },
       results: { zs: calculation.zs, maxZs: calculation.maxZs, isCompliant: calculation.isCompliant }
     };
     const signature = JSON.stringify(payload);
@@ -208,14 +216,16 @@ Calculated via The Sparkys Mate
     saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
       console.error('Error auto-saving Zs history:', error);
     });
-  }, [calculation, supplySystem, ze, phaseSize, cpcSize, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice]);
+  }, [calculation, supplySystem, ze, phaseSize, cpcSize, resistance, cableLength, useTotalResistance, totalResistance, deviceType, protectiveDevice, cpcModel]);
 
   const availableRatings = useMemo(() => {
-    return Object.keys(DEVICE_LIMITS[deviceType]).map(Number).sort((a, b) => a - b);
+    return getDeviceRatings(deviceType);
   }, [deviceType]);
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} />
+      {showResult && !calculation.isValid && <p role="alert" className="text-xs text-red-400">Enter valid resistance/length inputs and a recorded rating for this device. No other rating is substituted.</p>}
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <div className="space-y-4">
           {/* Supply System */}
@@ -276,6 +286,7 @@ Calculated via The Sparkys Mate
           <div className="grid grid-cols-1 gap-4">
             {!useTotalResistance ? (
               <div className="space-y-4">
+                <InspectionCpcControl value={cpcModel} onChange={setCpcModel} />
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Phase Conductor (mm²)</label>
@@ -297,9 +308,11 @@ Calculated via The Sparkys Mate
                     <div className="relative">
                       <select 
                         value={cpcSize}
+                        disabled={cpcModel !== 'manual'}
                         onChange={(e) => setCpcSize(e.target.value)}
                         className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
                       >
+                        {cpcSize === '' && <option value="">No supported factory CPC</option>}
                         {Object.keys(CABLE_RESISTANCE).map(Number).sort((a, b) => a - b).map(size => (
                           <option key={size} value={size}>{size} mm²</option>
                         ))}
@@ -320,6 +333,7 @@ Calculated via The Sparkys Mate
                     type="number"
                     inputMode="decimal"
                     value={resistance}
+                    disabled={cpcModel !== 'manual'}
                     onChange={(e) => setResistance(e.target.value)}
                     className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none"
                   />
@@ -390,6 +404,7 @@ Calculated via The Sparkys Mate
                 onChange={(e) => setProtectiveDevice(parseInt(e.target.value))}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
               >
+                {!availableRatings.includes(protectiveDevice) && <option value={protectiveDevice} disabled>{protectiveDevice} A - no recorded limit</option>}
                 {availableRatings.map(rating => (
                   <option key={rating} value={rating}>{rating}A</option>
                 ))}
@@ -404,12 +419,13 @@ Calculated via The Sparkys Mate
             disabled={!useTotalResistance && !cableLength}
             className="w-full bg-emerald-500 text-black py-5 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-emerald-400 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale mt-4 shadow-lg shadow-emerald-500/20"
           >
-            Calculate Zs
+            {showResult ? 'Recalculate Zs' : 'Calculate Zs'}
           </button>
         </div>
       </div>
 
-      {showResult && (
+      {showResult && <RecalculateButton inputKey={JSON.stringify([phaseSize,cpcSize,cpcModel,ze,cableLength,resistance,useTotalResistance,totalResistance,deviceType,protectiveDevice])} onRecalculate={() => setShowResult(true)} message={calculation.isValid ? calculation.isCompliant ? 'Recalculated: recorded design-Zs check passes. Verify the installation and source assumptions.' : 'Recalculated: design-Zs check fails; measured/installed inputs have not been changed.' : 'No valid result for these inputs.'} />}
+      {showResult && calculation.isValid && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -498,8 +514,8 @@ Calculated via The Sparkys Mate
                 <div className="space-y-2">
                   <p className="text-xs text-gray-300 leading-relaxed font-sans">
                     {calculation.isCompliant 
-                      ? `The calculated Hot Zs (${calculation.zs.toFixed(2)}Ω) is within the tabulated maximum of ${calculation.maxZs.toFixed(2)}Ω. Disconnection requirements of BS 7671 are met under maximum load.`
-                      : `The calculated Hot Zs (${calculation.zs.toFixed(2)}Ω) exceeds the tabulated maximum of ${calculation.maxZs.toFixed(2)}Ω. Disconnection requirements are NOT met.`}
+                      ? `Estimated design Zs (${calculation.zs.toFixed(2)}Ω) is within the recorded legacy maximum (${calculation.maxZs.toFixed(2)}Ω). Source data and installation conditions require verification; this is not a BS 7671 compliance determination.`
+                      : `Estimated design Zs (${calculation.zs.toFixed(2)}Ω) exceeds the recorded legacy maximum (${calculation.maxZs.toFixed(2)}Ω). Review the circuit and source data.`}
                   </p>
                 </div>
               </div>
@@ -510,13 +526,13 @@ Calculated via The Sparkys Mate
                   <div className="space-y-1 bg-black/20 p-2.5 rounded-xl border border-hardware-border/20">
                     <p className="font-bold text-gray-400 uppercase text-[8px] tracking-wider">1. Temperature Correction (1.2x)</p>
                     <p>
-                      Conductor resistance values in standard tables are given at 20°C. In operation, the cable heats up to 70°C. We multiply the 20°C resistance by <span className="text-emerald-500 font-bold">1.2</span> to compute the expected "hot" loop resistance.
+                      This legacy design estimate multiplies circuit R1+R2 by <span className="text-emerald-500 font-bold">1.2</span>, leaving external Ze unchanged. The assumed conductor temperature and correction are not source-verified for every cable type.
                     </p>
                   </div>
                   <div className="space-y-1 bg-black/20 p-2.5 rounded-xl border border-hardware-border/20">
                     <p className="font-bold text-gray-400 uppercase text-[8px] tracking-wider">2. 0.8 / 80% Rule of Thumb</p>
                     <p>
-                      When verifying loop impedance on-site using a tester, the cables are cold (~20°C). Under the "Rule of Thumb", we verify that measured Zs is within <span className="text-emerald-500 font-bold">80%</span> (0.8 factor) of the tabulated limit, ensuring it remains compliant when heated under load.
+                      The <span className="text-emerald-500 font-bold">80%</span> (0.8 factor) field-test comparison is separate from the unadjusted design limit and is not equivalent to the 1.2 circuit-resistance estimate. A detailed temperature correction and source applicability check may be required.
                     </p>
                   </div>
                 </div>
@@ -612,6 +628,7 @@ Calculated via The Sparkys Mate
                 <p className="text-[10px] text-gray-500 text-center uppercase font-bold tracking-widest">Preview</p>
                 <div className="mt-4 p-4 bg-hardware-bg rounded-2xl border border-hardware-border overflow-hidden">
                   <div ref={shareRef} className="p-6 bg-hardware-bg text-white font-sans">
+                    <SourceNotes ids={sourceIds} expanded assumptions={[`CPC model: ${useTotalResistance ? 'measured total resistance' : cpcModel}; ${phaseSize}/${cpcSize}mm2.`]} />
                     <div className="flex items-center gap-3 mb-6 border-b border-white/10 pb-4">
                       <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center text-white">
                         <Activity size={20} />
@@ -662,8 +679,9 @@ Calculated via The Sparkys Mate
               </div>
 
               {/* Hidden PDF Report (White Background) */}
-              <div className="fixed -left-[9999px] top-0">
+              <div aria-hidden="true" className="fixed -left-[9999px] top-0">
                 <div ref={pdfRef} className="w-[400px] p-10 bg-white text-black font-sans border border-gray-200">
+                  <SourceNotes ids={sourceIds} expanded assumptions={[`CPC model: ${useTotalResistance ? 'measured total resistance' : cpcModel}; ${phaseSize}/${cpcSize}mm2.`]} />
                   <div className="flex items-center gap-4 mb-8 border-b border-gray-100 pb-6">
                     <div className="w-12 h-12 bg-emerald-600 rounded-xl flex items-center justify-center text-white">
                       <Activity size={24} />

@@ -8,24 +8,20 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
+
+    // A deletion tombstone also blocks still-valid tokens and offline replay.
+    function activeIdentity() {
+      return isAuthenticated() &&
+        (!exists(/databases/$(database)/documents/privacyRequests/$(request.auth.uid)) ||
+         !(get(/databases/$(database)/documents/privacyRequests/$(request.auth.uid)).data.status in ['processing', 'completed', 'retry-required']));
+    }
     
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return activeIdentity() && request.auth.uid == userId;
     }
 
     function isAdmin() {
-      return isAuthenticated() && 
-        'email' in request.auth.token &&
-        (request.auth.token.email == "tommyholm97@gmail.com" ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
-    }
-
-    function isTestUser() {
-      return isAuthenticated() && 
-        'email' in request.auth.token &&
-        (request.auth.token.email.endsWith("@test.com") || 
-         request.auth.token.email in ["test@example.com", "tester@circuitsmart.com"]);
+      return activeIdentity() && request.auth.token.get('admin', false) == true;
     }
 
     function isValidUser(data) {
@@ -33,6 +29,33 @@ service cloud.firestore {
              data.uid is string &&
              data.email is string &&
              data.isPro is bool;
+    }
+
+    function protectedFields() {
+      return businessFields().concat(['role', 'admin', 'claims', 'deletionPending']);
+    }
+
+    function writable(userId) {
+      return !get(/databases/$(database)/documents/users/$(userId)).data.get('deletionPending', false);
+    }
+
+    function businessActive(userId) {
+      let data = get(/databases/$(database)/documents/users/$(userId)).data;
+      return data.get('isBusiness', false) == true ||
+        invoicedActive(data) ||
+        timestamp.value(data.get('businessUntil', 0)) > request.time ||
+        timestamp.value(data.get('businessStripeUntil', 0)) > request.time;
+    }
+
+    function invoicedActive(data) {
+      let grant = data.get('invoicedBusiness', {});
+      return grant.get('revoked', true) == false && grant.get('licenceId', '') != '' &&
+        timestamp.value(grant.get('startsAt', 0)) <= request.time &&
+        timestamp.value(grant.get('expiresAt', 0)) > request.time;
+    }
+
+    function businessFields() {
+      return ['invoicedBusiness', 'isBusiness', 'businessUntil', 'businessStripeUntil', 'businessStripeSubscriptionId', 'nativeSubscription', 'stripeSubscriptionId', 'stripeCustomerId', 'stripeTier', 'stripeUntil', 'subscriptionId', 'pendingCheckoutId'];
     }
 
     // ===============================================================
@@ -44,21 +67,77 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       
       // Only the user (or admin) can create their profile
-      // Admin/Test users can set isPro to true, others must start as false
+      // Paid entitlements are created by the verified Admin SDK backend only.
       allow create: if (isOwner(userId) || isAdmin()) && 
+                    !request.resource.data.keys().hasAny(protectedFields()) &&
+                    request.resource.data.uid == userId &&
                     isValidUser(request.resource.data) && 
-                    (request.resource.data.isPro == false || isAdmin() || isTestUser());
+                    request.resource.data.isPro == false;
       
-      // Users can update their profile. Native purchases currently set isPro from the app.
+      // Profile edits cannot grant or revoke subscription access.
       allow update: if (isOwner(userId) || isAdmin()) && 
-                    isValidUser(request.resource.data) && 
-                    (request.resource.data.isPro == resource.data.isPro ||
-                     request.resource.data.isPro == true ||
-                     isAdmin() ||
-                     isTestUser());
+                    writable(userId) && request.resource.data.uid == userId &&
+                    !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedFields().concat(['isPro'])) &&
+                    isValidUser(request.resource.data);
 
       match /history/{historyId} {
-        allow read, write: if isOwner(userId);
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId) && writable(userId);
+      }
+
+      // Financial ledgers and counters are written only by the authenticated Admin API.
+      // They are independent of project tombstones and never cascade-delete.
+      match /invoices/{invoiceId} {
+        allow read: if isOwner(userId);
+        allow write: if false;
+      }
+      match /financeMeta/{counterId} {
+        allow read, write: if false;
+      }
+      match /rams/{id} { allow read: if isOwner(userId); allow write: if false; }
+      match /ramsProjectLocks/{id} { allow read: if isOwner(userId); allow write: if false; }
+      match /ramsFamilies/{id} { allow read, write: if false; }
+      match /ramsReferences/{id} { allow read, write: if false; }
+      match /storageReservations/{id} { allow read, write: if false; }
+
+      match /business/{recordId} {
+        function parentActive(data) {
+          return data.kind in ['project', 'settings', 'ramsTemplate'] ||
+            (exists(/databases/$(database)/documents/users/$(userId)/business/$(data.projectId)) &&
+             get(/databases/$(database)/documents/users/$(userId)/business/$(data.projectId)).data.kind == 'project' &&
+             get(/databases/$(database)/documents/users/$(userId)/business/$(data.projectId)).data.deleted == false);
+        }
+        function parentDeleted(data) {
+          return data.projectId != '' &&
+            exists(/databases/$(database)/documents/users/$(userId)/business/$(data.projectId)) &&
+            get(/databases/$(database)/documents/users/$(userId)/business/$(data.projectId)).data.deleted == true;
+        }
+        function valid(data) {
+          return data.keys().hasOnly(['id','ownerUid','projectId','kind','payload','createdAt','updatedAt','revision','mutationId','deleted']) &&
+            data.keys().hasAll(['id','ownerUid','projectId','kind','payload','createdAt','updatedAt','revision','mutationId','deleted']) &&
+            data.id == recordId && data.ownerUid == userId && data.projectId is string &&
+            data.kind in ['project','materials','quote','photo','calculation','settings','invoiceDraft','ramsDraft','ramsTemplate'] &&
+            data.payload is map && data.deleted is bool && data.revision is int && data.revision > 0 &&
+            data.mutationId is string && data.mutationId.size() <= 100 && data.createdAt is string && data.updatedAt is string &&
+            ((data.kind in ['project','settings','ramsTemplate'] && data.projectId == '') || (!(data.kind in ['project','settings','ramsTemplate']) && data.projectId != '')) &&
+            (data.deleted || data.kind != 'ramsDraft' || data.payload.status in ['Draft','Ready for Review']) &&
+            (data.deleted || data.kind != 'ramsTemplate' || data.payload.draft.status in ['Draft','Ready for Review']);
+        }
+        function preserved() {
+          return (resource.data.kind != 'project' || !request.resource.data.deleted || !exists(/databases/$(database)/documents/users/$(userId)/ramsProjectLocks/$(recordId))) &&
+            (resource.data.kind != 'calculation' || request.resource.data.deleted || request.resource.data.payload == resource.data.payload) &&
+            (resource.data.kind != 'quote' || !('issuedAt' in resource.data.payload) ||
+              (request.resource.data.deleted && parentDeleted(resource.data)) ||
+              (!request.resource.data.deleted && request.resource.data.payload.diff(resource.data.payload).affectedKeys().hasOnly(['status'])));
+        }
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && writable(userId) && businessActive(userId) && valid(request.resource.data) && request.resource.data.revision == 1 &&
+          (request.resource.data.deleted || parentActive(request.resource.data));
+        allow update: if isOwner(userId) && writable(userId) && businessActive(userId) && valid(request.resource.data) && !resource.data.deleted &&
+          request.resource.data.kind == resource.data.kind && request.resource.data.projectId == resource.data.projectId &&
+          request.resource.data.createdAt == resource.data.createdAt && request.resource.data.revision == resource.data.revision + 1 &&
+          (request.resource.data.deleted || parentActive(request.resource.data)) && preserved();
+        allow delete: if false;
       }
     }
 

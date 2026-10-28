@@ -28,9 +28,10 @@ import { getHistory, deleteHistoryItem } from '../services/historyService';
 
 interface HistoryProps {
   onSelect: (item: CalculationHistory) => void;
+  userId?: string;
 }
 
-export default function History({ onSelect }: HistoryProps) {
+export default function History({ onSelect, userId }: HistoryProps) {
   const [history, setHistory] = useState<CalculationHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -39,7 +40,7 @@ export default function History({ onSelect }: HistoryProps) {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const data = await getHistory();
+        const data = await getHistory(userId);
         setHistory(data);
       } catch (error) {
         console.error('Error fetching history:', error);
@@ -52,12 +53,12 @@ export default function History({ onSelect }: HistoryProps) {
 
     window.addEventListener('bs7671-history-updated', fetchHistory);
     return () => window.removeEventListener('bs7671-history-updated', fetchHistory);
-  }, []);
+  }, [userId]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     try {
-      await deleteHistoryItem(null, id);
+      await deleteHistoryItem(userId, id);
       setHistory(prev => prev.filter(item => item.id !== id));
       if (selectedItem?.id === id) setSelectedItem(null);
     } catch (error) {
@@ -190,6 +191,9 @@ export default function History({ onSelect }: HistoryProps) {
               </div>
 
               <div className="space-y-6">
+                <button onClick={() => {onSelect(selectedItem);setSelectedItem(null);}} className="min-h-11 flex items-center gap-2 px-4 py-3 border border-emerald-500/30 rounded-md text-emerald-400">
+                  <FileText size={18}/>Save to project
+                </button>
                 {/* Inputs */}
                 <div>
                   <h4 className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-3">Input Parameters</h4>

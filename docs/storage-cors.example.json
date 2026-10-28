@@ -1,0 +1,11 @@
+[
+  {
+    "origin": [
+      "http://localhost:3000",
+      "https://localhost",
+      "capacitor://localhost"
+    ],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Ruler, Settings2, CheckCircle2, AlertTriangle, Share2, History as HistoryIcon, Check, ArrowRightLeft } from 'lucide-react';
-import { SupplyType, InstallationMethod, SupplySystem, DeviceType, CircuitType, CableType } from '../types';
-import { calculateCircuit, suggestDeviceType } from '../utils/calculations';
+import { Zap, Ruler, Settings2, CheckCircle2, AlertTriangle, Share2, History as HistoryIcon, Check, ArrowRightLeft, RefreshCw } from 'lucide-react';
+import { SupplyType, InstallationMethod, SupplySystem, DeviceType, CircuitType, CableType, CpcArrangement } from '../types';
+import { calculateCircuit, suggestDeviceType, getCircuitInputIssue } from '../utils/calculations';
+import { INSTALLATION_ENTRIES, getInstallationIssue, getDeviceRatings, getResistanceSizes, getSourceIdsForTool, formatSourceNotes } from '../data/electrical';
+import SourceNotes from './SourceNotes';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
-import { DEVICE_LIMITS } from '../constants';
 
 interface SmartCircuitDesignerProps {
   onShare: (text: string) => void;
@@ -17,6 +18,13 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
   const [length, setLength] = useState<string>('');
   const [method, setMethod] = useState<InstallationMethod>(InstallationMethod.METHOD_C);
   const [cableType, setCableType] = useState<CableType>(CableType.PVC_PVC);
+  const [operatingTemperature, setOperatingTemperature] = useState<70 | 90>(70);
+  const [separateCopperCpcSize, setSeparateCopperCpcSize] = useState<string>('');
+  const [cpcArrangement, setCpcArrangement] = useState<CpcArrangement>('separate');
+  const [recalculationCount, setRecalculationCount] = useState(0);
+  const [lastRecalculatedKey, setLastRecalculatedKey] = useState<string | null>(null);
+  const isArmoured = cableType === CableType.PVC_SWA || cableType === CableType.XLPE_SWA;
+  const circuitOptions = { operatingTemperature, cpcArrangement, autoSizeSeparateCpc: isArmoured && cpcArrangement === 'separate' && separateCopperCpcSize === '', separateCopperCpcSize: Number(separateCopperCpcSize) || undefined };
   const [supplyType, setSupplyType] = useState<SupplyType>(SupplyType.SINGLE_PHASE);
   const [deviceTypeOverride, setDeviceTypeOverride] = useState<DeviceType | null>(null);
   const [circuitType, setCircuitType] = useState<CircuitType>(CircuitType.OTHER);
@@ -35,17 +43,29 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
       if (supplyType === SupplyType.SINGLE_PHASE) {
         loadCurrent = (load * 1000) / 230;
       } else {
-        loadCurrent = (load * 1000) / (1.732 * 400 * 0.9);
+        loadCurrent = (load * 1000) / (Math.sqrt(3) * 400 * 0.9);
       }
     }
     return suggestDeviceType(loadCurrent, supplyType, circuitType, ze);
   }, [loadValue, loadUnit, supplyType, circuitType, zeValue]);
 
   const activeDeviceType = deviceTypeOverride || suggestedDeviceType;
+  const selectionIssue = getCircuitInputIssue(cableType, method, supplyType, 30, 1, activeDeviceType, circuitOptions);
+  const sourceIds = getSourceIdsForTool('SMART_CIRCUIT', cableType);
 
   const availableRatings = useMemo(() => {
-    return Object.keys(DEVICE_LIMITS[activeDeviceType]).map(Number).sort((a, b) => a - b);
+    return getDeviceRatings(activeDeviceType);
   }, [activeDeviceType]);
+
+  const calculationKey = (rating: number | null = protectiveDeviceRatingOverride) => JSON.stringify([
+    loadValue, loadUnit, length, method, cableType, supplyType, circuitType,
+    supplySystem, zeValue, activeDeviceType, rating, operatingTemperature, cpcArrangement, separateCopperCpcSize,
+  ]);
+  const handleRecalculate = () => {
+    setProtectiveDeviceRatingOverride(null);
+    setLastRecalculatedKey(calculationKey(null));
+    setRecalculationCount(count => count + 1);
+  };
 
   const zeMap: Record<SupplySystem, number> = {
     [SupplySystem.TN_C_S]: 0.35,
@@ -66,10 +86,14 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
     setDeviceTypeOverride(null);
   }, [loadValue, loadUnit, supplyType, circuitType, zeValue]);
 
+  useEffect(() => {
+    if (getInstallationIssue(cableType, method)) setMethod(InstallationMethod.METHOD_C);
+  }, [cableType, method]);
+
   const result = useMemo(() => {
     const load = parseFloat(loadValue) || 0;
     const len = parseFloat(length) || 0;
-    const ze = parseFloat(zeValue) || 0;
+    const ze = zeValue.trim() === '' ? NaN : Number(zeValue);
     if (load <= 0 || len <= 0) return null;
 
     let loadKw = load;
@@ -78,7 +102,7 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
         loadKw = (load * 230) / 1000;
       } else {
         // Three phase: P = I * V * sqrt(3) * PF
-        loadKw = (load * 400 * 1.732 * 0.9) / 1000;
+        loadKw = (load * 400 * Math.sqrt(3) * 0.9) / 1000;
       }
     }
 
@@ -93,24 +117,26 @@ export default function SmartCircuitDesigner({ onShare }: SmartCircuitDesignerPr
       1,  // Grouping
       ze,
       activeDeviceType,
-      protectiveDeviceRatingOverride || undefined
+      protectiveDeviceRatingOverride || undefined,
+      circuitOptions
     );
-  }, [loadValue, loadUnit, length, method, cableType, zeValue, supplyType, activeDeviceType, circuitType, protectiveDeviceRatingOverride]);
+  }, [loadValue, loadUnit, length, method, cableType, zeValue, supplyType, activeDeviceType, circuitType, protectiveDeviceRatingOverride, operatingTemperature, separateCopperCpcSize, cpcArrangement, recalculationCount]);
 
   const handleShare = () => {
     if (!result) return;
     const text = `
 ⚡ CIRCUIT DESIGN RESULT ⚡
 -------------------------
-Purpose: BS 7671 Compliant Design
+Purpose: Circuit estimate using identified reference tables; not a complete compliance assessment
 Load: ${loadValue}${loadUnit}
 Length: ${length}m
-Method: ${method}
+Method: ${INSTALLATION_ENTRIES.find(entry => entry.id === method)?.label}
 Cable: ${cableType}
 Supply: ${supplySystem} (Ze: ${zeValue}Ω)
 
 RESULTS:
 - Cable Size: ${result.cableSize}mm²${result.cpcSize ? ` (Line) / ${result.cpcSize}mm² (CPC)` : ''}
+- CPC Arrangement: ${result.cpcArrangement === 'integral' ? 'Integral copper CPC' : 'Separate copper CPC'}
 - Protective Device: ${result.protectiveDevice}A (${activeDeviceType})
 - Voltage Drop: ${result.voltageDropPercentage.toFixed(2)}% (${result.isCompliant ? 'PASS' : 'FAIL'})
 - Zs: ${result.zs?.toFixed(2)}Ω (${result.zsCompliant ? 'PASS' : 'FAIL'})
@@ -119,7 +145,7 @@ OVERALL COMPLIANCE: ${result.isCompliant ? 'PASS' : 'FAIL'}
 -------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, result.assumptions)}`);
   };
 
   const handleSaveHistory = async () => {
@@ -130,7 +156,7 @@ Calculated via The Sparkys Mate
         auth.currentUser?.uid,
         'circuit',
         `Design: ${result.cableSize}mm² / ${result.protectiveDevice}A`,
-        { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride },
+        { loadValue, loadUnit, length, method, cableType, supplyType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride, operatingTemperature, separateCopperCpcSize, cpcArrangement },
         result
       );
       setTimeout(() => setIsSavingHistory(false), 2000);
@@ -146,7 +172,7 @@ Calculated via The Sparkys Mate
     const payload = {
       type: 'circuit' as const,
       title: `Design: ${result.cableSize}mm² / ${result.protectiveDevice}A`,
-      inputs: { loadValue, loadUnit, length, method, cableType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride },
+      inputs: { loadValue, loadUnit, length, method, cableType, supplyType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride, operatingTemperature, separateCopperCpcSize, cpcArrangement },
       results: result
     };
     const signature = JSON.stringify(payload);
@@ -156,15 +182,18 @@ Calculated via The Sparkys Mate
     saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
       console.error('Error auto-saving smart circuit history:', error);
     });
-  }, [result, loadValue, loadUnit, length, method, cableType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride]);
+  }, [result, loadValue, loadUnit, length, method, cableType, supplyType, supplySystem, zeValue, deviceTypeOverride, protectiveDeviceRatingOverride, operatingTemperature, separateCopperCpcSize, cpcArrangement]);
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} />
+      {selectionIssue && <p role="alert" className="text-xs text-red-400 break-words">{selectionIssue}</p>}
+      {!selectionIssue && loadValue && length && !result && <p role="alert" className="text-xs text-red-400">No supported cable/device combination fits these inputs and the selected CPC. Review the load, length, device rating and CPC constraints, or recalculate using the suggested device rating.</p>}
       {/* Purpose Header */}
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <h3 className="text-emerald-500 font-bold text-[10px] uppercase tracking-widest mb-2">Purpose</h3>
         <p className="text-xs text-gray-400 leading-relaxed">
-          Automatically design a compliant electrical circuit based on minimal user input using UK BS 7671 principles.
+          Estimate circuit parameters using the recorded cable and device data. Source verification and the installation-specific checks shown below are still required.
         </p>
       </div>
 
@@ -255,10 +284,13 @@ Calculated via The Sparkys Mate
           <div>
             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Installation Method</label>
             <div className="grid gap-2 max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
-              {Object.values(InstallationMethod).map((m) => (
+              {INSTALLATION_ENTRIES.filter(entry => !getInstallationIssue(cableType, entry.id)).map((entry) => {
+                const m = entry.id;
+                return (
                 <button
                   key={m}
                   type="button"
+                  aria-pressed={method === m}
                   onClick={() => setMethod(m)}
                   className={`w-full min-w-0 py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border flex items-start justify-between gap-3 ${
                     method === m
@@ -266,13 +298,41 @@ Calculated via The Sparkys Mate
                       : 'bg-black/40 text-gray-400 border-hardware-border hover:border-white/20'
                   }`}
                 >
-                  <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{m}</span>
+                  <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{entry.label}</span>
                   {method === m && <CheckCircle2 size={16} className="shrink-0" />}
                 </button>
-              ))}
+              ); })}
             </div>
           </div>
         </div>
+
+        {cableType === CableType.XLPE_SWA && (
+          <div>
+            <label htmlFor="circuit-operating-temperature" className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Conductor Operating Limit</label>
+            <select id="circuit-operating-temperature" value={operatingTemperature} onChange={e => setOperatingTemperature(Number(e.target.value) as 70 | 90)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white outline-none text-sm">
+              <option value={70}>70C - standard equipment limit (4D4)</option>
+              <option value={90}>90C - equipment manufacturer confirmed (4E4)</option>
+            </select>
+          </div>
+        )}
+        {isArmoured && (
+          <div>
+            <label htmlFor="circuit-cpc-arrangement" className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">CPC Arrangement</label>
+            <select id="circuit-cpc-arrangement" value={cpcArrangement} onChange={e => setCpcArrangement(e.target.value as CpcArrangement)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white outline-none text-sm">
+              <option value="separate">Separate copper CPC</option>
+              <option value="integral">Integral copper CPC (full-size core)</option>
+            </select>
+          </div>
+        )}
+        {isArmoured && cpcArrangement === 'separate' && (
+          <div>
+            <label htmlFor="circuit-separate-cpc" className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Separate Copper CPC (mm2; matching insulation; not armour)</label>
+            <select id="circuit-separate-cpc" value={separateCopperCpcSize} onChange={e => setSeparateCopperCpcSize(e.target.value)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white outline-none text-sm">
+              <option value="">Automatic (recommended)</option>
+              {getResistanceSizes('copper').filter(size => size >= 4 && size <= 400).map(size => <option key={size} value={size}>{size} mm2</option>)}
+            </select>
+          </div>
+        )}
 
         <div className="space-y-4">
           <div>
@@ -339,11 +399,24 @@ Calculated via The Sparkys Mate
             </div>
           </div>
         </div>
+        <button type="button" onClick={handleRecalculate} className="w-full flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-500">
+          <RefreshCw size={16} /> Recalculate
+        </button>
+        {lastRecalculatedKey === calculationKey() && (
+          <p key={recalculationCount} role="status" aria-live="polite" className={`text-xs break-words ${result?.isCompliant ? 'text-emerald-500' : 'text-red-400'}`}>
+            {selectionIssue || (result?.isCompliant
+              ? `Recalculated: ${result.cableSize}mm2 cable${result.cpcSize ? ` / ${result.cpcSize}mm2 CPC` : ''}, ${result.protectiveDevice}A device. Recorded checks pass.`
+              : result ? 'Recalculated: no passing combination was found within the selected cable, device type and CPC constraints.'
+                : 'No result. Enter a valid load and length, then review the selected cable, device type and CPC constraints.')}
+          </p>
+        )}
       </div>
 
       {/* Result Section */}
       {result && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+          <SourceNotes ids={sourceIds} assumptions={result.assumptions} />
+          <p className="text-xs text-gray-400 break-words">{result.ratingTable}; rating column {result.capacityColumn}; voltage-drop column {result.voltageDropColumn}. {isArmoured ? `${result.cpcArrangement === 'integral' ? 'Integral copper core CPC' : 'Separate copper CPC'}: ${result.cpcSize} mm2; armour not counted.` : ''}</p>
           <div className={`p-6 rounded-3xl border ${result.isCompliant ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
             <div className="flex items-center justify-between mb-6">
               <h3 className="font-bold text-white uppercase tracking-wider text-sm">Circuit Design Result</h3>
@@ -485,8 +558,8 @@ Calculated via The Sparkys Mate
                 <div className="space-y-2">
                   <p className="text-xs text-gray-400 leading-relaxed">
                     {result.isCompliant 
-                      ? "The circuit design is fully compliant with BS 7671. The selected cable size and protective device ensure safe operation and disconnection within required limits."
-                      : `The circuit design fails to meet BS 7671 requirements. ${!result.zsCompliant ? 'Earth Loop Impedance (Zs) exceeds the limit for this device. ' : ''}${result.voltageDropPercentage > result.limitPercentage ? 'Voltage drop exceeds the allowed limit. ' : ''}Consider a larger cable, a different protection device, or reducing the circuit length.`}
+                      ? 'The recorded current-capacity, voltage-drop and design-Zs checks pass using the declared assumptions. The data is unverified; this does not establish BS 7671 compliance or complete device suitability.'
+                      : `The recorded calculation checks fail. ${!result.zsCompliant ? 'Design Zs exceeds the recorded device limit. ' : ''}${result.voltageDropPercentage > result.limitPercentage ? 'Voltage drop exceeds the selected target. ' : ''}Review the inputs and source data before designing the circuit.`}
                   </p>
                 </div>
               </div>
@@ -499,7 +572,7 @@ Calculated via The Sparkys Mate
                 <h4 className="text-[10px] font-extrabold uppercase text-gray-300 tracking-wider">Zs Temperature Correction & 80% Rule</h4>
               </div>
               <p className="text-[11px] text-gray-400 leading-relaxed font-sans">
-                Earth fault loop impedance (<span className="text-white font-mono">Zs</span>) calculations are automatically corrected using a <span className="text-emerald-500 font-bold">1.2 multiplier</span> to account for conductor temperature rise from 20°C (ambient testing) to 70°C (safe operating limit under load).
+                The design estimate applies a <span className="text-emerald-500 font-bold">{cableType === CableType.XLPE_SWA && operatingTemperature === 90 ? '1.28' : '1.2'} multiplier</span> to circuit conductor resistance only. This is an approximate temperature allowance; Ze is unchanged. The separate 80% field-test comparison is not an equivalent adjustment.
               </p>
               <div className="grid grid-cols-2 gap-4 pt-1">
                 <div>
@@ -512,7 +585,7 @@ Calculated via The Sparkys Mate
                 </div>
               </div>
               <p className="text-[10px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded-xl border border-hardware-border/20 font-sans">
-                * Note: Under unloaded/cold test conditions, actual measured on-site Zs must be compared against the <span className="text-white font-bold">80% limit</span> to ensure compliance when heated under full load.
+                * The <span className="text-white font-bold">80% comparison</span> is a field-test quick check, not a complete compliance assessment. Verify the source limits, conductor temperature and detailed circuit conditions.
               </p>
             </div>
 

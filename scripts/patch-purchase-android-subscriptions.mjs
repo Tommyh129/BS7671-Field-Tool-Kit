@@ -34,7 +34,10 @@ const evolvedPatchMarkers = {
   'Android plugin product type pass-through': 'billing.getProducts(productIds, productType)',
   'Android billing diagnostics bridge method': 'failedCheck", "billing_initialization_failed"',
   'Android plugin activity failure snapshot': 'billing.recordDiagnosticFailure(',
-  'Android plugin selected offer token pass-through': 'billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken)'
+  'Android plugin selected offer token pass-through': 'billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken',
+  'Android purchase selected offer token parameter': 'oldPurchaseToken: String? = null',
+  'Android lazy billing purchase call': 'oldProductId, oldPurchaseToken) { result ->',
+  'Android free trial offer preference': 'call.getBoolean("preferBasePlan", false)'
 };
 
 function replaceRequired(content, search, replacement, label) {
@@ -1600,5 +1603,111 @@ plugin = replaceRequired(
 );
 
 writeIfChanged(pluginPath, plugin);
+
+// Apply this last so earlier compatibility patches still recognise their anchors.
+// A plan change MUST carry the old token; never retry it as a separate purchase.
+let replacementImplementation = fs.readFileSync(implementationPath, 'utf8');
+if (!replacementImplementation.includes('fun getSubscriptionPurchasesForChange(')) {
+  replacementImplementation = replaceRequired(
+    replacementImplementation,
+    '    fun getActivePurchases(callback: (List<TransactionDetails>) -> Unit) {',
+    `    fun getSubscriptionPurchasesForChange(callback: (List<TransactionDetails>?, String?) -> Unit) {
+        ensureConnected(
+            onConnected = {
+                val params = QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
+                billingClient.queryPurchasesAsync(params) { result, purchases ->
+                    logBillingResult("subscriptionReplacementQuery", result)
+                    when {
+                        result.responseCode != BillingClient.BillingResponseCode.OK -> callback(null, "Existing subscriptions could not be checked. Response "+result.responseCode+": "+sanitizeDiagnosticText(result.debugMessage))
+                        purchases.any { it.purchaseState == Purchase.PurchaseState.PENDING } -> callback(null, "A subscription payment is pending. Wait for it to complete before changing plans.")
+                        else -> callback(purchases.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }.map { createTransactionDetails(it) }, null)
+                    }
+                }
+            },
+            onFailure = { callback(null, "Google Play could not check the existing subscription. No new payment has been started.") }
+        )
+    }
+
+    fun getActivePurchases(callback: (List<TransactionDetails>) -> Unit) {`,
+    'Android fail-closed existing subscription query'
+  );
+}
+replacementImplementation = replaceRequired(
+  replacementImplementation,
+  'offerToken: String? = null, callback: (PurchaseResult) -> Unit)',
+  'offerToken: String? = null, oldProductId: String? = null, oldPurchaseToken: String? = null, callback: (PurchaseResult) -> Unit)',
+  'Android subscription replacement arguments'
+);
+replacementImplementation = replaceRequired(
+  replacementImplementation,
+  '                 val billingFlowParams = BillingFlowParams.newBuilder()\n',
+  `                 if ((oldProductId == null) != (oldPurchaseToken == null) ||
+                     (oldProductId != null && (oldProductId == productId || oldPurchaseToken.isNullOrBlank()))) {
+                     pendingPurchaseCallbacks.remove(productId)
+                     callback(PurchaseResult(status = "failed", errorCode = "INVALID_REPLACEMENT", errorMessage = "Restore the existing subscription before changing plans. No new purchase was started."))
+                     return@ensureConnected
+                 }
+                 val billingFlowParams = BillingFlowParams.newBuilder()
+                     .apply {
+                         if (!oldPurchaseToken.isNullOrBlank()) {
+                             setSubscriptionUpdateParams(
+                                 BillingFlowParams.SubscriptionUpdateParams.newBuilder()
+                                     .setOldPurchaseToken(oldPurchaseToken)
+                                     .setSubscriptionReplacementMode(BillingFlowParams.SubscriptionUpdateParams.ReplacementMode.WITH_TIME_PRORATION)
+                                     .build()
+                             )
+                         }
+                     }
+`,
+  'Android replace existing subscription billing flow'
+);
+writeIfChanged(implementationPath, replacementImplementation);
+let replacementPlugin = fs.readFileSync(pluginPath, 'utf8');
+replacementPlugin = replaceRequired(
+  replacementPlugin,
+  '        val billing = requireBilling(call, "getActivePurchases") ?: return',
+  `        val billing = requireBilling(call, "getActivePurchases") ?: return
+        if (call.getBoolean("requireComplete", false) == true) {
+            billing.getSubscriptionPurchasesForChange { purchases, error ->
+                if (purchases == null) {
+                    call.reject(error ?: "Existing subscriptions could not be checked.", "PURCHASE_QUERY_FAILED")
+                } else {
+                    val rows = JSArray()
+                    purchases.forEach { transaction -> rows.put(JSObject().apply {
+                        put("productId", transaction.productId)
+                        put("transactionId", transaction.id)
+                        put("receipt", transaction.receipt)
+                        put("date", transaction.date)
+                    }) }
+                    call.resolve(JSObject().apply { put("purchases", rows) })
+                }
+            }
+            return
+        }`,
+  'Android bridge fail-closed subscription query'
+);
+replacementPlugin = replaceRequired(
+  replacementPlugin,
+  `                             val subscriptionOffer = subscriptionOffers.firstOrNull { offer ->
+                                 offer.pricingPhases.pricingPhaseList.firstOrNull()?.priceAmountMicros == 0L
+                             } ?: subscriptionOffers.firstOrNull()`,
+  `                             val subscriptionOffer = if (call.getBoolean("preferBasePlan", false) == true) {
+                                 subscriptionOffers.firstOrNull { it.offerId == null }
+                             } else {
+                                 subscriptionOffers.firstOrNull { offer ->
+                                     offer.pricingPhases.pricingPhaseList.firstOrNull()?.priceAmountMicros == 0L
+                                 } ?: subscriptionOffers.firstOrNull()
+                             }`,
+  'Android base plan for subscription replacements'
+);
+replacementPlugin = replaceRequired(
+  replacementPlugin,
+  '        billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken) { result ->',
+  `        val oldProductId = call.getString("oldProductId")?.trim()
+        val oldPurchaseToken = call.getString("oldPurchaseToken")?.trim()
+        billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken, oldProductId, oldPurchaseToken) { result ->`,
+  'Android bridge subscription replacement'
+);
+writeIfChanged(pluginPath, replacementPlugin);
 
 console.log('Patched capacitor-plugin-purchase Android subscription and Play Billing 9.0.0 support.');

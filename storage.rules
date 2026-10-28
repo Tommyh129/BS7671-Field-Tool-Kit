@@ -1,0 +1,57 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function activeOwner(uid) {
+      return request.auth != null && request.auth.uid == uid &&
+        !firestore.get(/databases/(default)/documents/users/$(uid)).data.get('deletionPending', false);
+    }
+    // Invoice originals/credit PDFs are immutable and server-generated.
+    match /invoices/{uid}/{invoiceId}/{fileId} {
+      allow read: if activeOwner(uid);
+      allow write: if false;
+    }
+    match /rams/{uid}/{documentId}/{fileId} {
+      allow read: if activeOwner(uid);
+      allow write: if false;
+    }
+    match /business/{uid}/{projectId}/{fileId} {
+      function owner() {return activeOwner(uid);}
+      function businessActive() {
+        let data = firestore.get(/databases/(default)/documents/users/$(uid)).data;
+        return !data.get('deletionPending', false) && (data.get('isBusiness', false) == true ||
+          (data.get('invoicedBusiness', {}).get('revoked', true) == false &&
+           data.get('invoicedBusiness', {}).get('licenceId', '') != '' &&
+           timestamp.value(data.get('invoicedBusiness', {}).get('startsAt', 0)) <= request.time &&
+           timestamp.value(data.get('invoicedBusiness', {}).get('expiresAt', 0)) > request.time) ||
+          timestamp.value(data.get('businessUntil', 0)) > request.time ||
+          timestamp.value(data.get('businessStripeUntil', 0)) > request.time);
+      }
+      function projectDeleted() {
+        return projectId != '_settings' &&
+          firestore.get(/databases/(default)/documents/users/$(uid)/business/$(projectId)).data.deleted == true;
+      }
+      function valid() {
+        return request.resource.size <= 8 * 1024 * 1024 &&
+          request.resource.contentType in ['image/jpeg','image/png','application/pdf'] &&
+          request.resource.metadata.keys().hasAll(['recordId','kind']) &&
+          request.resource.metadata.kind in ['photo','quote','settings'];
+      }
+      function reserved() {
+        let permit = firestore.get(/databases/(default)/documents/users/$(uid)/storageReservations/$(fileId)).data;
+        return permit.path == 'business/' + uid + '/' + projectId + '/' + fileId &&
+          permit.bytes == request.resource.size && permit.recordId == request.resource.metadata.recordId &&
+          permit.kind == request.resource.metadata.kind && permit.expiresAt > request.time;
+      }
+      function activeParent() {
+        return projectId == '_settings' ? !firestore.get(/databases/(default)/documents/users/$(uid)).data.get('deletionPending', false) :
+          (firestore.get(/databases/(default)/documents/users/$(uid)/business/$(projectId)).data.deleted == false);
+      }
+      allow read: if owner();
+      // Reservation and parent are the only two cross-service documents needed for create.
+      allow create: if request.auth != null && request.auth.uid == uid && valid() && reserved() && activeParent();
+      // A retry may upload the exact same bytes, never replace an issued PDF.
+      allow update: if owner() && businessActive() && valid() && request.resource.md5Hash == resource.md5Hash && request.resource.metadata == resource.metadata;
+      allow delete: if owner() && (resource.metadata.kind != 'quote' || projectDeleted());
+    }
+  }
+}

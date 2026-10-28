@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Zap, Share2, Activity, ArrowRightLeft, History as HistoryIcon, Check } from 'lucide-react';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import RecalculateButton from './RecalculateButton';
 
 interface ThreePhaseCalculatorProps {
   onShare: (text: string) => void;
@@ -121,6 +122,7 @@ Calculated via The Sparkys Mate
 
   return (
     <div className="space-y-6">
+      <RecalculateButton inputKey={JSON.stringify([voltage,current,power,pf,calcDirection,phaseType])} message={Number(voltage) > 0 && Number(pf) > 0 && Number(pf) <= 1 && Number(calcDirection === 'toPower' ? current : power) > 0 ? `Recalculated: ${calculation.power.toFixed(2)}kW / ${calculation.current.toFixed(2)}A. Power conversion only; cable/CPC sizing is separate.` : 'Enter valid voltage, load and power factor.'} />
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">

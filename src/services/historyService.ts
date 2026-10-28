@@ -1,4 +1,6 @@
 import { CalculationHistory } from '../types';
+import { DATASET_SOURCES, getSourceIdsForTool } from '../data/electrical';
+import { clearToolUsage } from './homeSummary';
 
 const LOCAL_HISTORY_KEY = 'bs7671.calculationHistory.v1';
 const MAX_HISTORY_ITEMS = 100;
@@ -37,11 +39,16 @@ export const saveCalculation = async (
   results: any
 ) => {
   try {
+    const sourceIds = getSourceIdsForTool(type, inputs?.cableType, inputs?.material);
+    if (sourceIds.length) {
+      results = { ...results, dataSources: sourceIds.map(id => DATASET_SOURCES[id]), sourceVerified: false };
+    }
     const signature = getCalculationSignature(type, title, inputs, results);
     const history = getStoredHistory();
-    const existing = history.find(item => getCalculationSignature(item.type, item.title, item.inputs, item.results) === signature);
+    const existing = history.find(item => item.userId === (userId || 'local') && getCalculationSignature(item.type, item.title, item.inputs, item.results) === signature);
 
     if (existing) {
+      window.dispatchEvent(new CustomEvent('sparkys-calculation-ready', { detail: existing }));
       return existing;
     }
 
@@ -57,6 +64,7 @@ export const saveCalculation = async (
 
     writeStoredHistory([newItem, ...history]);
     window.dispatchEvent(new Event('bs7671-history-updated'));
+    window.dispatchEvent(new CustomEvent('sparkys-calculation-ready', { detail: newItem }));
     return newItem;
   } catch (error) {
     console.error('Error saving calculation:', error);
@@ -64,12 +72,18 @@ export const saveCalculation = async (
   }
 };
 
-export const getHistory = async (_userId?: string | null): Promise<CalculationHistory[]> => {
-  return getStoredHistory();
+export const getHistory = async (userId?: string | null): Promise<CalculationHistory[]> => {
+  return getStoredHistory().filter(item => item.userId === (userId || 'local'));
 };
 
-export const deleteHistoryItem = async (_userId: string | null | undefined, historyId: string) => {
+export const deleteHistoryItem = async (userId: string | null | undefined, historyId: string) => {
   const history = getStoredHistory();
-  writeStoredHistory(history.filter(item => item.id !== historyId));
+  writeStoredHistory(history.filter(item => item.id !== historyId || item.userId !== (userId || 'local')));
   window.dispatchEvent(new Event('bs7671-history-updated'));
 };
+
+export function clearLocalHistory(userId: string) {
+  clearToolUsage(userId);
+  writeStoredHistory(getStoredHistory().filter(item => item.userId !== userId));
+  window.dispatchEvent(new Event('bs7671-history-updated'));
+}

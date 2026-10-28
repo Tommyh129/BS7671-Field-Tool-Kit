@@ -3,6 +3,11 @@ import { motion } from 'motion/react';
 import { Activity, Zap, AlertTriangle, CheckCircle2, Share2, History as HistoryIcon, Check } from 'lucide-react';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import { formatSourceNotes } from '../data/electrical';
+import SourceNotes from './SourceNotes';
+import RecalculateButton from './RecalculateButton';
+
+const sourceIds = ['manufacturer-protection'];
 
 interface FaultCurrentCalculatorProps {
   onShare: (text: string) => void;
@@ -12,7 +17,7 @@ export default function FaultCurrentCalculator({ onShare }: FaultCurrentCalculat
   const [voltage, setVoltage] = useState<string>('230');
   const [zs, setZs] = useState<string>('');
   const [phaseType, setPhaseType] = useState<'single' | 'three'>('single');
-  const [breakingCapacity, setBreakingCapacity] = useState<string>('6000'); // 6kA default
+  const [breakingCapacity, setBreakingCapacity] = useState<string>('');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const lastSavedHistoryRef = React.useRef<string | null>(null);
 
@@ -21,7 +26,7 @@ export default function FaultCurrentCalculator({ onShare }: FaultCurrentCalculat
     const zsVal = parseFloat(zs) || 0;
     const capacityVal = parseFloat(breakingCapacity) || 0;
 
-    if (zsVal === 0) return null;
+    if (![vVal, zsVal, capacityVal].every(Number.isFinite) || vVal <= 0 || zsVal <= 0 || capacityVal <= 0) return null;
 
     // For three phase, the PFC is usually taken as 2 * (Uo / Zs),
     // where Uo is derived from the entered line-to-line voltage.
@@ -54,7 +59,7 @@ Summary: The prospective fault current is ${calculation.ka.toFixed(2)}kA. The ${
 -------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, [phaseType === 'three' ? 'Three-phase fault current is a legacy estimate: 2 x (line-line voltage / sqrt(3)) / Zs; confirm actual prospective fault current.' : 'Single-phase I = voltage / loop impedance.', 'Breaking capacity is user-entered manufacturer data; this compares current only, not overall protective-device suitability.'])}`);
   };
 
   const handleSaveHistory = async () => {
@@ -95,6 +100,9 @@ Calculated via The Sparkys Mate
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} />
+      <RecalculateButton inputKey={JSON.stringify([voltage,zs,phaseType,breakingCapacity])} message={calculation ? `Recalculated: ${calculation.ka.toFixed(2)}kA; entered breaking capacity ${calculation.isAdequate ? 'adequate for this current comparison' : 'insufficient'}. Installed inputs unchanged.` : 'Enter valid voltage, loop impedance and manufacturer breaking capacity.'} />
+      {!breakingCapacity && <p role="alert" className="text-xs text-gray-400">Enter the actual device breaking capacity from its marking or manufacturer documentation. No generic rating is assumed.</p>}
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <div className="space-y-4">
           <div>

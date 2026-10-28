@@ -23,6 +23,11 @@ import { SupplyType, DeviceType } from '../types';
 import { DEVICE_LIMITS } from '../constants';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import { getDeviceRatings, formatSourceNotes, FIELD_TEST_LIMIT_MULTIPLIER } from '../data/electrical';
+import SourceNotes from './SourceNotes';
+import RecalculateButton from './RecalculateButton';
+
+const sourceIds = ['protection', 'temperature'];
 
 interface ProtectiveDeviceSelectorProps {
   onShare: (text: string) => void;
@@ -67,7 +72,8 @@ export default function ProtectiveDeviceSelector({ onShare }: ProtectiveDeviceSe
       return parseFloat(loadAmps) || 0;
     } else {
       const kwVal = parseFloat(loadKw) || 0;
-      const pfVal = parseFloat(powerFactor) || 0.9;
+      const pfVal = Number(powerFactor);
+      if (!Number.isFinite(pfVal) || pfVal <= 0 || pfVal > 1) return NaN;
       if (kwVal <= 0) return 0;
 
       if (supplyType === SupplyType.SINGLE_PHASE) {
@@ -103,18 +109,19 @@ export default function ProtectiveDeviceSelector({ onShare }: ProtectiveDeviceSe
 
   // 3. Get available ratings for current device type
   const availableRatings = useMemo(() => {
-    return Object.keys(DEVICE_LIMITS[activeDeviceType]).map(Number).sort((a, b) => a - b);
+    return getDeviceRatings(activeDeviceType);
   }, [activeDeviceType]);
 
   // 4. Suggest standard rating (In) >= design current (Ib)
   const suggestedRating = useMemo(() => {
-    const minRating = availableRatings.find((r) => r >= designCurrent) || availableRatings[availableRatings.length - 1];
-    return minRating || 32;
+    return availableRatings.find((r) => r >= designCurrent) ?? 0;
   }, [availableRatings, designCurrent]);
 
   const activeRating = ratingOverride !== null && availableRatings.includes(ratingOverride)
     ? ratingOverride
     : suggestedRating;
+  const selectionIssue = !Number.isFinite(designCurrent) || designCurrent <= 0 || !availableRatings.includes(activeRating) || activeRating < designCurrent
+    ? 'No recorded device rating meets this load. Select a valid rating or obtain manufacturer data; the largest available rating is not substituted.' : null;
 
   // Auto reset rating override if active device type changes or suggested rating shifts
   useEffect(() => {
@@ -127,7 +134,7 @@ export default function ProtectiveDeviceSelector({ onShare }: ProtectiveDeviceSe
   }, [activeDeviceType, activeRating]);
 
   const maxZs80 = useMemo(() => {
-    return maxZs100 * 0.8;
+    return maxZs100 * FIELD_TEST_LIMIT_MULTIPLIER;
   }, [maxZs100]);
 
   // Get disconnection times and characteristics
@@ -156,21 +163,21 @@ export default function ProtectiveDeviceSelector({ onShare }: ProtectiveDeviceSe
         applicationText = 'Designed for highly inductive industrial machinery, transformers, large motors, and welders.';
       }
     } else {
-      multiplier = 'Thermal & Magnetic elements';
+      multiplier = 'Not applicable - fuse characteristic';
       disconnectionTime = activeDeviceType.includes('5s') ? '5.0 seconds' : '0.4 seconds';
-      applicationText = 'Standard BS 88 HRC (High Rupturing Capacity) industrial cartridge fuse. Ideal for distribution boards or sub-mains.';
+      applicationText = `${activeDeviceType}: fuse-specific characteristics and application conditions require the source table and manufacturer documentation.`;
     }
 
     return {
       multiplier,
-      disconnectionTime,
+      disconnectionTime: `${disconnectionTime} (legacy assumption; verify Table 41.1 and circuit conditions)`,
       applicationText
     };
   }, [activeDeviceType, activeRating]);
 
   // Save history automatically
   useEffect(() => {
-    if (designCurrent <= 0) return;
+    if (designCurrent <= 0 || selectionIssue) return;
 
     const payload = {
       type: 'protective_device_selector' as const,
@@ -185,6 +192,7 @@ export default function ProtectiveDeviceSelector({ onShare }: ProtectiveDeviceSe
   }, [designCurrent, activeRating, activeDeviceType, maxZs100, maxZs80]);
 
   const handleShare = () => {
+    if (selectionIssue) return;
     const text = `
 ⚡ PROTECTIVE DEVICE SELECTION REPORT ⚡
 -----------------------------------------
@@ -206,7 +214,7 @@ Application: ${deviceInfo.applicationText}
 -----------------------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, ['Device suggestion is a load-profile heuristic, not a manufacturer coordination assessment. Design maximum and field-test comparison are separate.'])}`);
   };
 
   const handleDownloadImage = async () => {
@@ -234,13 +242,14 @@ Calculated via The Sparkys Mate
         backgroundColor: '#ffffff',
       });
 
+      const reportHeight = Math.max(600, 400 * pdfRef.current.scrollHeight / pdfRef.current.offsetWidth);
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'px',
-        format: [400, 600]
+        format: [400, reportHeight]
       });
 
-      pdf.addImage(dataUrl, 'PNG', 0, 0, 400, 600);
+      pdf.addImage(dataUrl, 'PNG', 0, 0, 400, reportHeight);
       const pdfDataUrl = pdf.output('datauristring');
 
       await downloadFile(pdfDataUrl, `bs7671-device-select-report-${Date.now()}.pdf`, 'application/pdf');
@@ -253,6 +262,9 @@ Calculated via The Sparkys Mate
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} />
+      <RecalculateButton inputKey={JSON.stringify([inputMode,loadAmps,loadKw,supplyType,powerFactor,circuitType,deviceTypeOverride,ratingOverride])} onRecalculate={() => setRatingOverride(null)} message={selectionIssue || (Number.isFinite(designCurrent) && designCurrent > 0 ? `Recalculated: ${activeRating}A (${activeDeviceType}). Cable, CPC and manufacturer coordination require separate assessment.` : 'Enter a valid load and power factor.')} />
+      {selectionIssue && <p role="alert" className="text-xs text-red-400">{selectionIssue}</p>}
       <div className="bg-hardware-card rounded-3xl border border-hardware-border p-5 sm:p-6 space-y-6">
 
         {/* Toggle Input Mode */}
@@ -365,7 +377,7 @@ Calculated via The Sparkys Mate
               <div>
                 <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Auto Recommendation</p>
                 <p className="text-sm font-mono font-bold text-white mt-0.5">
-                  Suggested Rating: <span className="text-emerald-400">{suggestedRating}A</span> • Type: <span className="text-emerald-400">{suggestedDeviceType.replace('60898 ', '')}</span>
+                  Suggested Rating: <span className="text-emerald-400">{suggestedRating > 0 ? `${suggestedRating}A` : 'Unavailable'}</span> • Type: <span className="text-emerald-400">{suggestedDeviceType.replace('60898 ', '')}</span>
                 </p>
               </div>
             </div>
@@ -415,7 +427,7 @@ Calculated via The Sparkys Mate
             <div>
               <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Adjust Device Rating</h4>
               <p className="text-[10px] text-gray-500 mt-1">
-                Suggested Rating: <span className="font-mono font-bold text-emerald-500">{suggestedRating}A</span> (Based on {designCurrent.toFixed(1)}A load)
+                Suggested Rating: <span className="font-mono font-bold text-emerald-500">{suggestedRating > 0 ? `${suggestedRating}A` : 'Unavailable'}</span> (Based on {designCurrent.toFixed(1)}A load)
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -425,6 +437,7 @@ Calculated via The Sparkys Mate
                   onChange={(e) => setRatingOverride(parseInt(e.target.value))}
                   className="bg-black/60 border border-hardware-border rounded-xl pl-3 pr-8 py-2 text-white font-mono font-bold text-xs outline-none focus:border-emerald-500/50 appearance-none cursor-pointer"
                 >
+                  {activeRating === 0 && <option value={0} disabled>No recorded rating meets this load</option>}
                   {availableRatings.map((rating) => (
                     <option key={rating} value={rating} className="bg-hardware-card text-white">
                       {rating}A {rating === suggestedRating ? '(Suggested)' : ''}
@@ -452,7 +465,7 @@ Calculated via The Sparkys Mate
       </div>
 
       {/* Results details panel */}
-      {designCurrent > 0 && (
+      {designCurrent > 0 && !selectionIssue && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -460,6 +473,7 @@ Calculated via The Sparkys Mate
         >
           {/* Main Results Card for Sharing/Saving */}
           <div ref={shareRef} className="bg-hardware-card rounded-3xl border border-hardware-border p-5 sm:p-6 space-y-6 relative overflow-hidden">
+            <SourceNotes ids={sourceIds} expanded />
             <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
             <div className="flex justify-between items-start">
@@ -490,12 +504,12 @@ Calculated via The Sparkys Mate
               <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50">
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Tabulated Max Zs (100% Limit)</p>
                 <p className="text-2xl font-mono font-bold text-white">{maxZs100.toFixed(2)} Ω</p>
-                <p className="text-[8px] text-gray-500 font-bold uppercase tracking-widest mt-2 bg-black/20 px-1.5 py-0.5 rounded border border-hardware-border/30 inline-block text-center">BS 7671 Table Limit (Hot Conductor 70°C)</p>
+                <p className="text-[8px] text-gray-500 font-bold uppercase tracking-widest mt-2 bg-black/20 px-1.5 py-0.5 rounded border border-hardware-border/30 inline-block text-center">Legacy design limit - source unverified</p>
               </div>
               <div className="p-4 bg-black/40 rounded-2xl border border-hardware-border/50">
                 <p className="text-emerald-500 text-[10px] font-bold uppercase tracking-widest mb-1">On-Site Limit (80% Rule of Thumb)</p>
                 <p className="text-2xl font-mono font-bold text-emerald-400">{maxZs80.toFixed(2)} Ω</p>
-                <p className="text-[8px] text-emerald-500/70 font-bold uppercase tracking-widest mt-2 bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/10 inline-block text-center">Rule of Thumb Limit (Cold Conductor 20°C)</p>
+                <p className="text-[8px] text-emerald-500/70 font-bold uppercase tracking-widest mt-2 bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/10 inline-block text-center">Field comparison - 0.8 x design limit</p>
               </div>
             </div>
 
@@ -506,13 +520,13 @@ Calculated via The Sparkys Mate
                 <div className="space-y-1 bg-black/20 p-2.5 rounded-xl border border-hardware-border/20">
                   <p className="font-bold text-gray-400 uppercase text-[8px] tracking-wider">1. Temperature Coefficient (1.2x)</p>
                   <p>
-                    BS 7671 maximum tabulated Zs limits are given for loaded, warm conductors (70°C). We apply a 1.2 multiplier to cable resistances measured cold (20°C) to predict compliance under loaded conditions.
+                    This selector displays the recorded design limit without applying a resistance correction. Other tools use a declared legacy 1.2 circuit-resistance estimate; source notes identify its unverified temperature applicability.
                   </p>
                 </div>
                 <div className="space-y-1 bg-black/20 p-2.5 rounded-xl border border-hardware-border/20">
                   <p className="font-bold text-gray-400 uppercase text-[8px] tracking-wider">2. 0.8 Rule of Thumb (80% Limit)</p>
                   <p>
-                    Alternatively, when testing on-site with a loop tester at ambient temperature (20°C), we compare measured Zs directly with <span className="text-emerald-500 font-bold">80%</span> (0.8 factor) of the tabulated limit. This is mathematically identical to applying the 1.2 temperature rise factor.
+                    The field-test comparison uses <span className="text-emerald-500 font-bold">80%</span> (0.8 factor) of the design limit as a separate rule of thumb. It is not mathematically equivalent to the 1.2 conductor-resistance estimate. Detailed correction and circuit conditions require verification.
                   </p>
                 </div>
               </div>
@@ -533,7 +547,7 @@ Calculated via The Sparkys Mate
                 <p className="text-sm font-mono font-bold text-white">{deviceInfo.multiplier}</p>
               </div>
               <div>
-                <p className="text-gray-500 text-[9px] font-bold uppercase tracking-widest mb-0.5">Minimum Trip Current</p>
+                <p className="text-gray-500 text-[9px] font-bold uppercase tracking-widest mb-0.5">Upper Instantaneous Threshold (Legacy)</p>
                 <p className="text-sm font-mono font-bold text-white">
                   {activeDeviceType.includes('Type B') && `${activeRating * 5}A`}
                   {activeDeviceType.includes('Type C') && `${activeRating * 10}A`}
@@ -626,8 +640,9 @@ Calculated via The Sparkys Mate
           </AnimatePresence>
 
           {/* Hidden PDF Sheet for print quality rendering */}
-          <div className="hidden">
-            <div ref={pdfRef} style={{ width: '400px', height: '600px', padding: '40px', backgroundColor: '#ffffff', color: '#151619' }} className="space-y-8 font-sans">
+          <div aria-hidden="true" className="fixed -left-[10000px] top-0 pointer-events-none">
+            <div ref={pdfRef} style={{ width: '400px', minHeight: '600px', padding: '40px', backgroundColor: '#ffffff', color: '#151619' }} className="space-y-8 font-sans">
+              <SourceNotes ids={sourceIds} expanded />
               <div className="border-b-2 border-emerald-500 pb-4">
                 <h1 className="text-2xl font-black tracking-tight uppercase">BS 7671 Field Report</h1>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 mt-1">Protective Device Selection</p>

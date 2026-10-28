@@ -1,0 +1,22 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import assert from 'node:assert/strict';
+
+const root=process.cwd(),archive=path.resolve(root,'build/capacitor-plugin-purchase-0.1.0.tgz');
+if(!fs.existsSync(archive))throw Error('First run: npm.cmd pack capacitor-plugin-purchase@0.1.0 --pack-destination build --ignore-scripts');
+const fixture=fs.mkdtempSync(path.join(root,'build/subscription-patch-qa-'));
+const plugin=path.join(fixture,'node_modules/capacitor-plugin-purchase');
+fs.mkdirSync(plugin,{recursive:true});
+execFileSync(process.platform==='win32'?'tar.exe':'tar',['-xzf',archive,'-C',plugin,'--strip-components','1']);
+const scripts=['patch-purchase-android-subscriptions.mjs','patch-purchase-spm.mjs'];
+const files=['android/build.gradle','android/src/main/java/com/scgscorp/capacitorpluginpurchase/InAppPurchase.kt','android/src/main/java/com/scgscorp/capacitorpluginpurchase/InAppPurchasePlugin.kt','Package.swift','ios/Sources/PurchasePlugin/InAppPurchase.swift','ios/Sources/PurchasePlugin/InAppPurchasePlugin.swift'];
+const run=()=>scripts.forEach(script=>execFileSync(process.execPath,[path.join(root,'scripts',script)],{cwd:fixture,stdio:'pipe'}));
+run();const first=files.map(file=>fs.readFileSync(path.join(plugin,file),'utf8'));
+run();files.forEach((file,i)=>assert.equal(fs.readFileSync(path.join(plugin,file),'utf8'),first[i],`Patch must be idempotent: ${file}`));
+assert.match(first[1],/setOldPurchaseToken\(oldPurchaseToken\)/);
+assert.match(first[1],/getSubscriptionPurchasesForChange/);
+assert.match(first[2],/requireComplete/);
+assert.match(first[2],/preferBasePlan/);
+assert.match(first[4],/dict\["subscriptionGroupId"\] = subscription.subscriptionGroupID/);
+console.log('Fresh published plugin patches passed twice with identical output: Android replacement, fail-closed ownership checks, base plans and Apple subscription groups.');

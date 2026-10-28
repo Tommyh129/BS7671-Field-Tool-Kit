@@ -1,5 +1,6 @@
 export enum AppMode {
   HOME = 'HOME',
+  DESIGN = 'DESIGN',
   SMART_CIRCUIT = 'SMART_CIRCUIT',
   VOLTAGE_DROP = 'VOLTAGE_DROP',
   THREE_PHASE = 'THREE_PHASE',
@@ -13,6 +14,7 @@ export enum AppMode {
   PROTECTIVE_DEVICE_SELECTOR = 'PROTECTIVE_DEVICE_SELECTOR',
   DC_VOLTAGE_DROP = 'DC_VOLTAGE_DROP',
   HISTORY = 'HISTORY',
+  PROJECTS = 'PROJECTS',
   PRIVACY = 'PRIVACY',
   TERMS = 'TERMS',
   ACCOUNT_DELETION = 'ACCOUNT_DELETION',
@@ -64,9 +66,7 @@ export enum CableType {
 
 export interface CableData {
   size: number; // mm2
-  capacity: {
-    [key in InstallationMethod]: number; // Amps
-  };
+  capacity: Partial<Record<InstallationMethod, number>>; // Amps; missing columns are unsupported.
   mvAm: number; // mV/A/m
 }
 
@@ -85,13 +85,22 @@ export enum DisconnectionTime {
   TIME_5 = '5s (Distribution)',
 }
 
+export type CpcArrangement = 'separate' | 'integral';
+
 export interface CalculationResult {
+  sourceVerified: false;
+  dataSourceIds: string[];
+  assumptions?: string[];
+  ratingTable?: string;
+  capacityColumn?: string;
+  voltageDropColumn?: string;
   loadCurrent: number;
   protectiveDevice: number;
   suggestedProtectiveDevice?: number;
   suggestedDeviceType?: DeviceType;
   cableSize: number;
   cpcSize?: number;
+  cpcArrangement?: CpcArrangement;
   voltageDrop: number;
   voltageDropPercentage: number;
   isCompliant: boolean;

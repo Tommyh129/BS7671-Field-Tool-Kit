@@ -17,33 +17,13 @@ import {
 } from 'lucide-react';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import { CONDUCTOR_RESISTANCE, getMotorCircuitSizes, formatSourceNotes } from '../data/electrical';
+import SourceNotes from './SourceNotes';
+import RecalculateButton from './RecalculateButton';
 
 interface ThreePhaseMotorCalculatorProps {
   onShare: (text: string) => void;
 }
-
-const CABLE_SIZES = [
-  1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300
-];
-
-const COPPER_RESISTANCE: Record<number, number> = {
-  1.5: 12.1,
-  2.5: 7.41,
-  4.0: 4.61,
-  6.0: 3.08,
-  10.0: 1.83,
-  16.0: 1.15,
-  25.0: 0.727,
-  35.0: 0.524,
-  50.0: 0.387,
-  70.0: 0.268,
-  95.0: 0.193,
-  120.0: 0.153,
-  150.0: 0.124,
-  185.0: 0.0991,
-  240.0: 0.0754,
-  300.0: 0.0601,
-};
 
 type StartingMethod = 'DOL' | 'Star-Delta' | 'Soft Starter' | 'VSD';
 
@@ -65,6 +45,8 @@ export default function ThreePhaseMotorCalculator({ onShare }: ThreePhaseMotorCa
   const [cableLength, setCableLength] = useState<string>('50');
   const [cableSize, setCableSize] = useState<number>(4);
   const [material, setMaterial] = useState<'copper' | 'aluminium'>('copper');
+  const cableSizes = getMotorCircuitSizes(material);
+  const sourceIds = [`resistance-${material}`];
   const [maxDropPercent, setMaxDropPercent] = useState<string>('5.0');
 
   // Interactive Sizing Recommendation Modal/State
@@ -101,6 +83,7 @@ export default function ThreePhaseMotorCalculator({ onShare }: ThreePhaseMotorCa
 
     // Initial validation
     const currentErrors: Record<string, string> = {};
+    if (!cableSizes.includes(cableSize)) currentErrors.cableSize = 'No supported fixed motor-power circuit size for this material; choose an available size or recalculate.';
 
     if (isNaN(vVal) || vVal <= 0) {
       currentErrors.supplyVoltage = 'Supply voltage must be greater than 0';
@@ -150,10 +133,7 @@ export default function ThreePhaseMotorCalculator({ onShare }: ThreePhaseMotorCa
     // Starting Current
     const startingCurrent = flc * multVal;
 
-    // Resistance Lookup (Copper base, 1.64x multiplier for Aluminium)
-    const baseR = COPPER_RESISTANCE[cableSize] || 0;
-    const multiplierR = material === 'aluminium' ? 1.64 : 1.0;
-    const finalR = baseR * multiplierR;
+    const finalR = CONDUCTOR_RESISTANCE[material][cableSize];
 
     // Voltage Drop = (√3 × L × I × R) / 1000
     // L = lengthVal, I = flc, R = finalR
@@ -192,7 +172,7 @@ export default function ThreePhaseMotorCalculator({ onShare }: ThreePhaseMotorCa
     const lengthVal = parseFloat(cableLength);
     const limitPct = parseFloat(maxDropPercent);
 
-    if (isNaN(vVal) || isNaN(pVal) || isNaN(pfVal) || isNaN(effVal) || isNaN(lengthVal) || isNaN(limitPct)) {
+    if (![vVal,pVal,pfVal,effVal,lengthVal,limitPct].every(Number.isFinite) || vVal <= 0 || pVal <= 0 || pfVal <= 0 || pfVal > 1 || effVal <= 0 || effVal > 100 || lengthVal <= 0 || limitPct <= 0 || limitPct > 100) {
       setRecommendationError('Please fill in all input parameters correctly before calculating.');
       setRecommendation(null);
       setShowRecommendation(true);
@@ -208,10 +188,8 @@ export default function ThreePhaseMotorCalculator({ onShare }: ThreePhaseMotorCa
     let foundResult = null;
 
     // Iterate through cable sizes smallest to largest
-    for (const size of CABLE_SIZES) {
-      const baseR = COPPER_RESISTANCE[size] || 0;
-      const multiplierR = material === 'aluminium' ? 1.64 : 1.0;
-      const finalR = baseR * multiplierR;
+    for (const size of cableSizes) {
+      const finalR = CONDUCTOR_RESISTANCE[material][size];
 
       const drop = (Math.sqrt(3) * lengthVal * flc * finalR) / 1000;
       const pct = (drop / vVal) * 100;
@@ -236,7 +214,7 @@ export default function ThreePhaseMotorCalculator({ onShare }: ThreePhaseMotorCa
     } else {
       setRecommendation(null);
       setRecommendationError(
-        `No cable size in our standard database (up to 300 mm²) satisfies the ${limitPct}% maximum running voltage drop limit. Consider raising the system voltage or shortening the cable length.`
+        `No recorded resistance size (up to ${cableSizes[cableSizes.length-1]}mm2) satisfies the ${limitPct}% running voltage-drop target.`
       );
     }
     setShowRecommendation(true);
@@ -332,11 +310,14 @@ Calculated Outputs:
 -----------------------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, ['Three-phase resistance-only voltage-drop estimate at assumed 20 deg C; reactance, current capacity and installation mapping are not assessed. Motor starting multiplier is an estimate requiring manufacturer data.'])}`);
   };
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} />
+      <RecalculateButton inputKey={JSON.stringify([supplyVoltage,motorPower,powerFactor,efficiency,startingMethod,startingMultiplier,cableLength,cableSize,material,maxDropPercent])} onRecalculate={() => { handleCalculateMinimumSize(); setShowRecommendation(false); }} message={recommendationError || (calculation.isValid ? calculation.isCompliant ? `Recalculated running voltage drop: ${cableSize}mm2. Ampacity, starting voltage drop and CPC require separate checks.` : 'Running voltage drop exceeds the target.' : 'Enter valid motor and cable inputs.')} />
+      {!CONDUCTOR_RESISTANCE[material][cableSize] && <p role="alert" className="text-xs text-red-400">No recorded {material} resistance for {cableSize} mm2. Select a recorded row; no scaled copper value is substituted.</p>}
       <div className="bg-hardware-card rounded-3xl border border-hardware-border p-5 sm:p-6 space-y-6">
 
         {/* Toggle Conductor Material */}
@@ -491,7 +472,8 @@ Calculated via The Sparkys Mate
                 onChange={(e) => setCableSize(parseFloat(e.target.value))}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none cursor-pointer"
               >
-                {CABLE_SIZES.map(size => (
+                {!cableSizes.includes(cableSize) && <option value={cableSize} disabled>{cableSize} mm2 - no recorded row</option>}
+                {cableSizes.map(size => (
                   <option key={size} value={size} className="bg-hardware-card text-white">
                     {size} mm² {material === 'copper' ? '(Copper)' : '(Aluminium)'}
                   </option>

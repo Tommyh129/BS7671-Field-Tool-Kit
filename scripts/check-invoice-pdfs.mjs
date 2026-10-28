@@ -1,0 +1,14 @@
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {blankCompany,blankProject,sellingItem} from '../src/business/model.ts';
+import {newInvoice,invoiceTotals} from '../src/business/invoices/model.ts';
+import {invoicePdf,creditPdf,balancePdf} from '../src/business/invoices/pdf.ts';
+const out='build/invoice-qa';await mkdir(out,{recursive:true});
+const logo=`data:image/png;base64,${(await readFile('build/branding-qa/transparent-logo.png')).toString('base64')}`;
+const company={...blankCompany(),name:'QA Electrical Installation Inspection and Specialist Engineering Services Across the United Kingdom',legalName:'QA Electrical Services Limited',businessType:'limited',address:'QA supplier address\nUnited Kingdom',email:'qa@example.com',vatRegistered:true,vatNumber:'QA-VAT',footer:'QA INVOICE FOOTER',paymentInstructions:'PAYMENT_OPT_IN',bankDetails:'BANK_OPT_IN'};
+const draft={...newInvoice('qa-project',{...blankProject('001'),title:'QA project',customer:'QA customer',address:'QA billing address'},company),issueDate:'2026-10-01',supplyDate:'2026-09-30',dueDate:'2026-10-15',siteAddress:'Different QA site address',items:Array.from({length:38},(_,n)=>({...sellingItem(),description:`Circuit ${n+1}: agreed electrical installation, inspection and testing services.`,quantity:'2.5',rate:'19.99',vat:['standard','reduced','zero','exempt','outside'][n%5]})),discount:'10.03',notes:'CLIENT_NOTE',documentOptions:{showContactDetails:true,showPaymentInstructions:true,showBankDetails:true,internal:false}};
+draft.items[0].cost='PRIVATE_COST';draft.privateNotes='PRIVATE_PROJECT_NOTES';
+const totals=invoiceTotals(draft),invoice={id:'qa',reference:'INV-QA-0001',draft,totals,state:'Issued',createdAt:'2026-10-01',issuedAt:'2026-10-01',pdfPath:'qa',payments:[{id:'p',date:'2026-10-02',amount:2000,method:'Cash',reference:'QA_PAYMENT',privateNote:'PRIVATE_PAYMENT_NOTE'}],credits:[],audit:[]};
+const credit={id:'c',reference:'CN-QA-0001',date:'2026-10-03',reason:'QA partial adjustment',state:'Issued',lines:[{index:0,net:1000,vat:200}],net:1000,vat:200,total:1200,pdfPath:'qa'};invoice.credits=[credit];
+const noVat={...draft,company:{...blankCompany(),name:'QA Sole Trader',legalName:'QA Personal Legal Name',address:'QA address',email:'qa@example.com',footer:'QA INVOICE FOOTER'},items:draft.items.slice(0,2).map(i=>({...i,vat:'nonVAT'})),discount:'0',documentOptions:{showContactDetails:true,showBankDetails:false,showPaymentInstructions:false,internal:false}};
+for(const [name,blob] of [['vat-invoice.pdf',invoicePdf(draft,invoice.reference,logo,true)],['non-vat-draft.pdf',invoicePdf(noVat)],['credit-note.pdf',creditPdf(invoice,credit,logo)],['balance-summary.pdf',balancePdf(invoice,logo)]])await writeFile(`${out}/${name}`,Buffer.from(await blob.arrayBuffer()));
+console.log('Generated four synthetic invoice PDFs; no real customer or bank details used.');

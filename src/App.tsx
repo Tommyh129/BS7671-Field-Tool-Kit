@@ -39,14 +39,22 @@ import {
   Gauge,
   BatteryCharging,
   Cable,
-  Globe
+  Globe,
+  FolderOpen
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
-import { jsPDF } from 'jspdf';
 import { downloadFile } from './utils/download';
+import { secureLegalUrl, PRIVACY_NOTICE_VERSION, PUBLISHED_PRIVACY_POLICY_URL, PUBLISHED_TERMS_URL } from './privacy/config';
+import { allowSandboxBusiness } from './privacy/sandbox';
+import { clearBusinessDeviceData, readBusiness } from './business/store';
+import { clearInvoiceDeviceData, pendingAction } from './business/invoices/client';
+import { clearRamsDeviceData, hasPendingRams } from './business/rams/client';
 import { SupplyType, InstallationMethod, CalculationResult, CircuitType, AppMode, CableCoreType, CableType, SupplySystem, DeviceType, CalculationHistory } from './types';
-import { calculateCircuit } from './utils/calculations';
-import { CABLE_DATABASE, PROTECTIVE_DEVICES, VOLTAGES } from './constants';
+import { calculateCircuit, getCircuitInputIssue, CircuitOptions } from './utils/calculations';
+import { getCableRows, getCombinationIssue, getInstallationIssue, INSTALLATION_ENTRIES, getSourceIdsForTool, formatSourceNotes } from './data/electrical';
+import CableDesignControls from './components/CableDesignControls';
+import RecalculateButton from './components/RecalculateButton';
+import SourceNotes from './components/SourceNotes';
 import ZsCalculator from './components/ZsCalculator';
 import FaultCurrentCalculator from './components/FaultCurrentCalculator';
 import CableResistanceCalculator from './components/CableResistanceCalculator';
@@ -58,10 +66,18 @@ import SmartCircuitDesigner from './components/SmartCircuitDesigner';
 import ProtectiveDeviceSelector from './components/ProtectiveDeviceSelector';
 import DcVoltageDropCalculator from './components/DcVoltageDropCalculator';
 import History from './components/History';
+import { ProjectsWorkspace } from './business/Projects';
+import HomeSummary from './components/HomeSummary';
+import { recordToolUse, TOOL_MODES, backDestination } from './services/homeSummary';
+import { SaveToProject } from './business/SaveToProject';
+import { BusinessArchive } from './business/BusinessArchive';
+import { blobDataUrl } from './business/pdf';
+import { STORE_ONLY_PURCHASE_MESSAGE, hasBusinessAccess, strongestStoreTier, storeTier, subscriptionApiUrl, validateBusinessStorePrice, planReplacement, androidReplacementToken, assertAppleSubscriptionGroup, type BusinessAccess, type SubscriptionTier } from './subscriptions';
+import { CalculatorDocument } from './business/CalculatorDocument';
 import ModalSheet from './components/ModalSheet';
 import { checkRegulatoryUpdates, DEFAULT_REGULATORY_UPDATE, REGULATORY_CACHE_VERSION, RegulatoryUpdate } from './services/geminiService';
 import { getApiUrl } from './services/api';
-import { saveCalculation } from './services/historyService';
+import { saveCalculation, clearLocalHistory, getHistory } from './services/historyService';
 import { auth, db } from './firebase';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -95,7 +111,7 @@ import {
 } from 'firebase/firestore';
 
 // --- Types ---
-interface UserProfile {
+interface UserProfile extends BusinessAccess {
   uid: string;
   email: string;
   isPro: boolean;
@@ -112,52 +128,20 @@ enum OperationType {
   WRITE = 'write',
 }
 
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string;
-    email?: string;
-    emailVerified?: boolean;
-    isAnonymous?: boolean;
-    tenantId?: string | null;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email || undefined,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+function handleFirestoreError(_error: unknown, operationType: OperationType, _path: string | null) {
+  console.error('Firestore operation failed:', operationType);
+  throw new Error('Cloud access failed. Check your connection and account permissions.');
 }
 
 // --- Constants ---
-const PUBLIC_APP_URL = 'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app';
-const PRIVACY_POLICY_URL = `${PUBLIC_APP_URL}?page=privacy`;
-const TERMS_OF_SERVICE_URL = `${PUBLIC_APP_URL}?page=terms`;
+const PUBLIC_APP_URL = 'https://the-sparkys-mate-29962838005.europe-west1.run.app';
+const PRIVACY_POLICY_URL = secureLegalUrl(import.meta.env.VITE_PRIVACY_POLICY_URL, PUBLISHED_PRIVACY_POLICY_URL);
+const TERMS_OF_SERVICE_URL = secureLegalUrl(import.meta.env.VITE_TERMS_URL, PUBLISHED_TERMS_URL);
+const PRIVACY_REQUEST_URL = secureLegalUrl(import.meta.env.VITE_PRIVACY_REQUEST_URL, '');
+const DATA_PROCESSING_TERMS_URL = secureLegalUrl(import.meta.env.VITE_DATA_PROCESSING_TERMS_URL, '');
+const privacyEmail = import.meta.env.VITE_PRIVACY_CONTACT_EMAIL || 'tommyholm@hotmail.co.uk';
+const PRIVACY_CONTACT_EMAIL = /^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(privacyEmail) ? privacyEmail : 'tommyholm@hotmail.co.uk';
+const PRIVACY_CONTACT_URL = `mailto:${PRIVACY_CONTACT_EMAIL}?subject=Privacy%20request%20or%20complaint`;
 const SUPPORT_URL = `${PUBLIC_APP_URL}?page=support`;
 const SUPPORT_EMAIL = 'mailto:tommyholm@hotmail.co.uk';
 const DEFAULT_PRO_PRODUCT_ID = 'pro_subscription';
@@ -255,25 +239,15 @@ const nativeProProductIds = () => {
   return productIdList(envValue('VITE_PRO_PRODUCT_ID') || DEFAULT_PRO_PRODUCT_ID);
 };
 
+const nativeBusinessProductIds = () => productIdList(
+  envValue(Capacitor.getPlatform() === 'ios' ? 'VITE_IOS_BUSINESS_PRODUCT_ID' : 'VITE_ANDROID_BUSINESS_PRODUCT_ID') ||
+  envValue('VITE_BUSINESS_PRODUCT_ID') || 'business_subscription'
+);
+const nativeProductIds = (tier: SubscriptionTier) => tier === 'business' ? nativeBusinessProductIds() : nativeProProductIds();
+const purchaseTier = (purchases: StorePurchaseLike[]) => strongestStoreTier(purchases, nativeProProductIds(), nativeBusinessProductIds());
+const billingApiUrl = (path: string) => subscriptionApiUrl(path, Capacitor.isNativePlatform(), getApiUrl);
+
 const productIdLabel = (productIds: string[]) => productIds.map(id => `"${id}"`).join(', ');
-
-const isKnownProProductId = (productId?: string | null) => {
-  return Boolean(productId && nativeProProductIds().includes(productId));
-};
-
-const hasStoreProEntitlement = (purchases: StorePurchaseLike[]) => {
-  const activeProductIds = purchases
-    .map(purchase => purchase.productId)
-    .filter((productId): productId is string => Boolean(productId));
-
-  if (activeProductIds.some(isKnownProProductId)) {
-    return true;
-  }
-
-  // The native app currently sells one durable entitlement: Pro. If the store
-  // returns an active purchase with a renamed product ID, keep paid users in.
-  return activeProductIds.length > 0;
-};
 
 const nativeProDeviceStorageKey = 'bs7671_native_pro_device';
 const nativeProStorageKey = (uid: string) => `bs7671_native_pro_${uid}`;
@@ -361,6 +335,10 @@ const friendlyAuthError = (error: unknown, action: 'sign-in' | 'sign-up' | 'dele
 };
 
 const openExternalUrl = async (url: string) => {
+  if (url.startsWith('mailto:')) {
+    window.location.href = url;
+    return;
+  }
   if (Capacitor.isNativePlatform()) {
     await CapacitorBrowser.open({ url });
     return;
@@ -401,17 +379,16 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const TEST_EMAILS = ["test@example.com", "tester@circuitsmart.com"];
-  const isAutoPro = (email: string) => {
-    const e = email.toLowerCase().trim();
-    return e === "tommyholm97@gmail.com" || TEST_EMAILS.includes(e) || e.endsWith("@test.com");
-  };
+  const isAutoPro = (_email: string) => allowSandboxBusiness({
+    dev:import.meta.env.DEV, enabled:import.meta.env.VITE_SANDBOX_BUSINESS_ACCESS==='true',
+    native:Capacitor.isNativePlatform(), hostname:window.location.hostname,
+  });
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [regulatoryInfo, setRegulatoryInfo] = useState<RegulatoryUpdate>(DEFAULT_REGULATORY_UPDATE);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [regulatoryCheckMessage, setRegulatoryCheckMessage] = useState<string | null>(null);
-  const [recentTools, setRecentTools] = useState<AppMode[]>([]);
+  const [homeProjectId, setHomeProjectId] = useState('');
   const [hasApiKey, setHasApiKey] = useState(true);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 
@@ -466,11 +443,32 @@ export default function App() {
     }
   };
 
+  const [upgradeTier, setUpgradeTier] = useState<SubscriptionTier>('pro');
+  const purchaseAttempt = useRef(false);
+  const [nativeBusinessUntil, setNativeBusinessUntil] = useState(0);
+  const [entitlementNow, setEntitlementNow] = useState(Date.now());
+  const sandboxBusiness = allowSandboxBusiness({
+    dev: import.meta.env.DEV,
+    enabled: import.meta.env.VITE_SANDBOX_BUSINESS_ACCESS === 'true',
+    native: Capacitor.isNativePlatform(),
+    hostname: window.location.hostname,
+  });
+  const effectiveIsBusiness = sandboxBusiness || hasBusinessAccess(user?.uid === profile?.uid ? profile : null, entitlementNow) || nativeBusinessUntil > entitlementNow;
+  useEffect(() => {
+    const tick = () => setEntitlementNow(Date.now());
+    const timer = window.setInterval(tick, 15000);
+    window.addEventListener('focus', tick);
+    return () => {clearInterval(timer);window.removeEventListener('focus', tick);};
+  }, []);
+  const openUpgrade = (tier: SubscriptionTier = 'pro') => {
+    setUpgradeTier(tier);setShowUpgradeModal(true);
+  };
+
   const effectiveIsPro = useMemo(() => {
     // Force Pro for specific testing accounts if needed
     if (user && isAutoPro(user.email || "")) return true;
-    return isPro || hasNativeProPurchase;
-  }, [isPro, hasNativeProPurchase, user]);
+    return isPro || hasNativeProPurchase || effectiveIsBusiness;
+  }, [isPro, hasNativeProPurchase, user, effectiveIsBusiness]);
 
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showBillingDiagnostics, setShowBillingDiagnostics] = useState(false);
@@ -484,6 +482,8 @@ export default function App() {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [privacyMessage, setPrivacyMessage] = useState('');
 
   // Shared States
   const [loadKw, setLoadKw] = useState<string>('');
@@ -492,6 +492,8 @@ export default function App() {
   const [cableCoreType, setCableCoreType] = useState<CableCoreType>(CableCoreType.MULTI_CORE);
   const [cableType, setCableType] = useState<CableType>(CableType.PVC_PVC);
   const [method, setMethod] = useState<InstallationMethod>(InstallationMethod.METHOD_C);
+  const [cableOptions, setCableOptions] = useState<CircuitOptions>({ operatingTemperature: 70, cpcArrangement: 'separate', autoSizeSeparateCpc: true });
+  useEffect(() => { if (getInstallationIssue(cableType, method)) setMethod(InstallationMethod.METHOD_C); }, [cableType, method]);
   const [circuitType, setCircuitType] = useState<CircuitType>(CircuitType.OTHER);
   const [ze, setZe] = useState<string>('0.35');
   const [deviceType, setDeviceType] = useState<DeviceType>(DeviceType.MCB_B);
@@ -624,7 +626,7 @@ export default function App() {
   // We keep the state but remove the restrictive filtering and auto-switching
   // to ensure all methods are available as requested.
 
-  const allMethods = useMemo(() => Object.values(InstallationMethod), []);
+  const allMethods = INSTALLATION_ENTRIES;
 
   // --- Auth & IAP Logic ---
   useEffect(() => {
@@ -654,7 +656,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       const email = firebaseUser?.email?.toLowerCase().trim() || "";
       const hasLocalNativePro = hasStoredNativeProAccess(firebaseUser?.uid);
-      console.log("App: Auth State Changed ->", email || "No User");
+      console.log("App: Authentication state changed.");
       setUser(firebaseUser);
       setHasNativeProPurchase(hasLocalNativePro);
 
@@ -680,22 +682,18 @@ export default function App() {
             await setDoc(userDocRef, {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
-              isPro: isAuto || hasLocalNativePro, // Auto-pro for admin/test and locally purchased native Pro
+              isPro: false, // Permanent account entitlements are written by the verified backend/admin only.
               displayName: firebaseUser.displayName || '',
               photoURL: firebaseUser.photoURL || '',
               createdAt: new Date().toISOString()
             });
-          } else if ((isAuto || hasLocalNativePro) && !userDoc.data()?.isPro) {
-            // Update existing admin/test or locally purchased native Pro account.
-            console.log("App: Updating existing profile to Pro...");
-            await updateDoc(userDocRef, { isPro: true });
           }
 
           unsubProfile = onSnapshot(userDocRef, (doc) => {
             if (doc.exists()) {
               const data = doc.data() as UserProfile;
               const proStatus = data.isPro || isAuto || hasStoredNativeProAccess(firebaseUser.uid);
-              console.log("App: Profile updated ->", proStatus ? "PRO" : "FREE", "Email:", data.email);
+              console.log("App: Profile refreshed.");
               setProfile(data);
               setIsPro(proStatus);
             }
@@ -872,30 +870,63 @@ export default function App() {
 
     console.log("App: Initializing Native IAP...");
     setHasNativeProPurchase(hasStoredNativeProAccess(user?.uid));
+    setNativeBusinessUntil(0);
+    let live = true;
 
     const checkActivePurchases = async () => {
       try {
         const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(user?.uid));
-        console.log("App: Active Purchases ->", purchases);
-        const hasPro = hasStoreProEntitlement(purchases);
-        if (hasPro) {
-          await handleSuccessfulPurchase();
-        }
+        if (!live) return;
+        const tier = purchaseTier(purchases);
+        if (tier) await handleSuccessfulPurchase({ tier, purchases });
+        else setNativeBusinessUntil(0);
       } catch (error) {
         console.error("App: Failed to check active purchases", error);
       }
     };
 
-    checkActivePurchases();
+    void checkActivePurchases();
+    const refresh = () => {if(document.visibilityState==='visible') void checkActivePurchases();};
+    const timer = window.setInterval(refresh, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange',refresh);
+    return () => {live=false;clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};
   }, [user]);
 
-  const handleSuccessfulPurchase = async ({ promptForAccount = false }: { promptForAccount?: boolean } = {}) => {
+  const handleSuccessfulPurchase = async ({ promptForAccount = false, tier = 'pro', purchases = [] }: { promptForAccount?: boolean; tier?: SubscriptionTier; purchases?: Array<StorePurchaseLike & {transactionId?:string;receipt?:string;userId?:string}> } = {}) => {
     const activeUser = auth.currentUser || user;
-    console.log("App: Handling successful purchase for:", activeUser?.uid || "device-only");
+    const purchase = purchases.find(item => storeTier(item.productId, nativeProProductIds(), nativeBusinessProductIds()) === tier);
+    // Preserve legacy Pro access if its old build didn't have server verification.
+    // New plan replacements are preflighted before the payment sheet opens.
+    let verify=tier==='business';
+    if(tier==='pro'&&purchase&&(Capacitor.getPlatform()==='android'||purchase.userId)){
+      const readiness=await fetch(billingApiUrl('/api/subscriptions/business/ready'),{signal:AbortSignal.timeout(15000)}).then(r=>r.json());
+      verify=Boolean(readiness[Capacitor.getPlatform()]);
+    }
+    if (verify) {
+      if (!purchase) throw Error('The store did not return a subscription purchase. Use Restore Purchases.');
+      const token = await activeUser?.getIdToken();
+      const response = await fetch(billingApiUrl('/api/subscriptions/verify'), {
+        method:'POST',headers:{'Content-Type':'application/json',...(token ? {Authorization:`Bearer ${token}`} : {})},
+        body:JSON.stringify({platform:Capacitor.getPlatform(),productId:purchase.productId,transactionId:purchase.transactionId,receipt:purchase.receipt,appAccountToken:purchase.userId}),
+        signal:AbortSignal.timeout(25000),
+      });
+      const verified = await response.json();
+      if (!response.ok || verified.tier !== tier || !Number.isFinite(verified.expiresAt) || verified.expiresAt <= Date.now()) throw Error(verified.error || 'Subscription verification could not finish. Restore Purchases; do not pay again.');
+      if (auth.currentUser?.uid !== activeUser?.uid) return;
+      // Store proof is checked on launch and restore; no permanent Business flag.
+      setNativeBusinessUntil(tier==='business'?verified.expiresAt:0);
+    }
+    if(tier==='business'){
+      setNativeProAccess(activeUser?.uid,false);
+      setIsPro(false);
+      if (promptForAccount) setShowUpgradeModal(false);
+      if (!activeUser && promptForAccount) setShowPostPurchaseAccountPrompt(true);
+      return;
+    }
 
     setNativeProAccess(activeUser?.uid, true);
     setIsPro(true);
-    setShowUpgradeModal(false);
+    if (promptForAccount) setShowUpgradeModal(false);
 
     if (!activeUser) {
       if (promptForAccount) {
@@ -904,19 +935,8 @@ export default function App() {
       return;
     }
 
-    try {
-      const userDocRef = doc(db, 'users', activeUser.uid);
-      await setDoc(userDocRef, {
-        uid: activeUser.uid,
-        email: activeUser.email || '',
-        isPro: true,
-        displayName: activeUser.displayName || '',
-        photoURL: activeUser.photoURL || '',
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    } catch (error) {
-      console.error("App: Failed to sync Pro status to Firestore; keeping local store entitlement active.", error);
-    }
+    // Verified purchases already update Firestore through the backend. Legacy
+    // local store access must not promote an unverified account permanently.
   };
 
   const handleRestorePurchases = async () => {
@@ -926,15 +946,16 @@ export default function App() {
       try {
         console.log("App: Restoring Native Purchases...");
         const { purchases } = await InAppPurchase.restorePurchases(nativePurchaseUserOptions(user?.uid));
-        console.log("App: Restored Native Purchases ->", purchases);
-        const hasPro = hasStoreProEntitlement(purchases);
-        if (hasPro) {
-          await handleSuccessfulPurchase({ promptForAccount: true });
+        const tier = purchaseTier(purchases);
+        if (tier) {
+          await handleSuccessfulPurchase({ promptForAccount: true, tier, purchases });
         } else {
-          alert('No active Pro subscription was found for this store account.');
+          setNativeBusinessUntil(0);
+          alert('No active Pro or Business subscription was found for this store account.');
         }
       } catch (error) {
         console.error("App: Restore failed", error);
+        alert(error instanceof Error ? error.message : 'Restore failed. Connect and try again.');
       } finally {
         setIsSyncing(false);
       }
@@ -947,13 +968,47 @@ export default function App() {
       return;
     }
 
-    // Web fallback (just sync with Firestore)
-    setTimeout(() => {
-      setIsSyncing(false);
-    }, 2000);
+    try {
+      const response=await fetch(billingApiUrl('/api/subscriptions/restore'),{method:'POST',headers:{Authorization:`Bearer ${await user.getIdToken()}`},signal:AbortSignal.timeout(25000)});
+      const result=await response.json();
+      if(!response.ok)throw Error(result.error||'Your subscription could not be restored.');
+      if(!result.restored)alert('No active web subscription was found. Restore store purchases on the original Apple or Google Play device.');
+    }catch(error){alert(error instanceof Error?error.message:'Subscription restore failed. Connect and retry.');}
+    finally{setIsSyncing(false);}
   };
 
   const handleLogout = () => signOut(auth);
+
+  const handlePrivacyAction = async (action: 'export' | 'clear') => {
+    if (!user || privacyBusy) return;
+    const uid = user.uid;
+    if (!window.confirm(action === 'export'
+      ? 'This private export includes client details, bank details and internal costs. Save it securely and do not send it to clients. Cloud file contents and original PDFs must be exported separately from Projects. Continue?'
+      : 'Remove this account\'s downloaded projects, invoices and calculation history from this device? Cloud records are not deleted. Unsynced changes and pending invoice actions must be resolved first.')) return;
+    setPrivacyBusy(true); setPrivacyMessage('');
+    try {
+      if (action === 'export') {
+        const response = await fetch(getApiUrl('/api/privacy/export'), {
+          headers: { Authorization: `Bearer ${await user.getIdToken()}` }, signal: AbortSignal.timeout(60000),
+        });
+        const result = await response.json();
+        if (!response.ok) throw Error(result.error || 'Export unavailable. Contact privacy support.');
+        if (auth.currentUser?.uid !== uid) throw Error('Account changed. Export cancelled.');
+        const local = { business: await readBusiness(uid), history: await getHistory(uid) };
+        await downloadFile(await blobDataUrl(new Blob([JSON.stringify({ ...result, local }, null, 2)], { type: 'application/json' })), 'sparkys-private-records.json', 'application/json');
+        setPrivacyMessage('Private records exported. Download original PDFs and images separately from Projects; this export lists cloud files but does not contain them.');
+      } else {
+        if (await pendingAction(uid)) throw Error('Resolve the pending invoice action first.');
+        if (await hasPendingRams(uid)) throw Error('Resolve pending RAMS issues first.');
+        await clearBusinessDeviceData(uid);
+        await clearInvoiceDeviceData(uid);
+        await clearRamsDeviceData(uid);
+        clearLocalHistory(uid);
+        setPrivacyMessage('Device copies cleared. Cloud records remain and can download again when Projects is opened. Previously exported files must be removed separately.');
+      }
+    } catch (error) { setPrivacyMessage(error instanceof Error ? error.message : 'Privacy action could not finish.'); }
+    finally { setPrivacyBusy(false); }
+  };
 
   const deletionProvider = useMemo(() => {
     const providerIds = user?.providerData.map(provider => provider.providerId) || [];
@@ -1005,6 +1060,7 @@ export default function App() {
 
   const handleDeleteAccount = async () => {
     if (!user) return;
+    if (!window.confirm('Export records and original PDFs you need before requesting account deletion. This submits a privacy review request, not immediate erasure. Support must explain any legally required retention. Store/web subscriptions must be cancelled separately with the original provider. Continue?')) return;
 
     setDeleteError(null);
     setIsDeletingAccount(true);
@@ -1017,28 +1073,24 @@ export default function App() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ idToken }),
+        body: JSON.stringify({ financialExportAcknowledged: true }),
+        signal: AbortSignal.timeout(30000),
       });
 
       const result = await response.json().catch(() => ({ success: false }));
-      if (response.ok && result.success) {
+      if (response.ok && result.accepted) {
         setDeleteSuccess(true);
         setDeletePassword('');
-        setTimeout(async () => {
-          await signOut(auth);
-          setShowSettingsModal(false);
-          setShowDeleteConfirm(false);
-          setDeleteSuccess(false);
-        }, 2000);
+        setPrivacyMessage(result.message);
       } else {
         throw new Error(result.error || "Failed to delete account");
       }
     } catch (error: any) {
-      console.error("Delete account failed", error);
+      console.error("Deletion request failed.");
       setDeleteError(
         authErrorCode(error)
           ? friendlyAuthError(error, 'delete')
-          : 'The account could not be deleted right now. Check your connection and try again.'
+          : error instanceof Error ? error.message : 'The deletion request could not be recorded. Contact privacy support.'
       );
     } finally {
       setIsDeletingAccount(false);
@@ -1131,6 +1183,7 @@ export default function App() {
   };
 
   const handleUpgrade = async () => {
+    if (purchaseAttempt.current) return;
     const purchaseUser = auth.currentUser || user;
     console.log("App: handleUpgrade triggered", {
       hasUser: !!purchaseUser,
@@ -1139,24 +1192,44 @@ export default function App() {
       platform: Capacitor.getPlatform()
     });
 
-    if (effectiveIsPro) {
+    if (upgradeTier === 'business' ? effectiveIsBusiness : effectiveIsPro && !effectiveIsBusiness) {
       console.log("App: User is already Pro, aborting upgrade.");
       return;
     }
 
-    if (!Capacitor.isNativePlatform() && !purchaseUser) {
-      console.log("App: No user found for web checkout, opening login...");
-      openAuthModal(false, true);
+    if (!Capacitor.isNativePlatform()) {
+      alert(STORE_ONLY_PURCHASE_MESSAGE);
       return;
     }
 
+    purchaseAttempt.current = true;
     setIsUpgrading(true);
 
     // Use Native IAP if on mobile
     if (Capacitor.isNativePlatform()) {
       try {
-        const productIds = nativeProProductIds();
+        const productIds = nativeProductIds(upgradeTier);
         const purchasePlatform = Capacitor.getPlatform();
+        // Query the whole store account, not only purchases mapped to this app UID.
+        // Otherwise signing in differently could accidentally buy a second plan.
+        const owned=await InAppPurchase.getActivePurchases({requireComplete:true} as any);
+        const replacement=planReplacement(owned.purchases,upgradeTier,nativeProProductIds(),nativeBusinessProductIds());
+        if(purchaseUser){
+          const contextResponse=await fetch(billingApiUrl('/api/subscriptions/context'),{headers:{Authorization:`Bearer ${await purchaseUser.getIdToken()}`},signal:AbortSignal.timeout(20000),cache:'no-store'});
+          const context=await contextResponse.json();
+          if(!contextResponse.ok)throw Error(context.error||'Existing subscriptions could not be checked. No payment has been started.');
+          if(context.invoicedBusiness)throw Error('Your organisation provides or has scheduled Business access. Contact your administrator before purchasing a personal subscription. No payment has been started.');
+          if(context.webActive)throw Error('Change your existing subscription on the web where it was purchased. A separate store subscription will not be started.');
+          if(context.native&&context.native.provider!==purchasePlatform)throw Error('Change your subscription through the original Apple or Google Play store. A second subscription will not be started.');
+          if(context.unknownLegacyPro&&!replacement)throw Error('Restore your existing subscription on the device/store where it was purchased before changing plans. No new payment has been started.');
+        }
+        if(replacement?.samePlan){await handleSuccessfulPurchase({promptForAccount:true,tier:upgradeTier,purchases:owned.purchases});return;}
+        if (upgradeTier === 'business' || replacement) {
+          const readyResponse = await fetch(billingApiUrl('/api/subscriptions/business/ready'), {signal:AbortSignal.timeout(15000),cache:'no-store'});
+          const ready = await readyResponse.json();
+          if (!readyResponse.ok || !ready[purchasePlatform]) throw Error('Subscription purchases and plan changes are not available yet. No payment has been started.');
+          if (nativeBusinessProductIds().some(id=>nativeProProductIds().includes(id))) throw Error('Business and Pro must use different store product IDs.');
+        }
         console.log("App: Starting Native Purchase flow for:", productIds);
 
         // Query the native store directly. Readiness checks can report false while
@@ -1168,9 +1241,11 @@ export default function App() {
           productType: PRO_PRODUCT_TYPE
         });
         const { products } = await InAppPurchase.getProducts({
-          productIds,
+          productIds:purchasePlatform==='ios'?[...nativeProProductIds(),...nativeBusinessProductIds()]:productIds,
+          ...(purchasePlatform==='android'&&replacement?{preferBasePlan:true}:{}),
           productType: PRO_PRODUCT_TYPE as any
         });
+        if(purchasePlatform==='ios')assertAppleSubscriptionGroup(products as Array<typeof products[number]&{subscriptionGroupId?:string}>,nativeProProductIds(),nativeBusinessProductIds());
         console.log("App: Store products returned ->", products);
         console.info('[BillingDiagnostics] Subscription product query completed', {
           requestedProductIds: productIds,
@@ -1183,14 +1258,15 @@ export default function App() {
           }))
         });
 
-        const product = products.find(item => productIds.includes(item.productId)) || products[0];
+        const product = products.find(item => productIds.includes(item.productId));
         if (!product) {
           console.warn('[BillingDiagnostics] No matching product details were returned', {
             requestedProductIds: productIds
           });
           const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(purchaseUser?.uid));
-          if (hasStoreProEntitlement(purchases)) {
-            await handleSuccessfulPurchase({ promptForAccount: true });
+          const tier = purchaseTier(purchases);
+          if (tier === upgradeTier) {
+            await handleSuccessfulPurchase({ promptForAccount: true, tier, purchases });
             return;
           }
 
@@ -1198,6 +1274,7 @@ export default function App() {
         }
 
         const offerToken = (product as typeof product & { offerToken?: string }).offerToken;
+        if (upgradeTier === 'business') validateBusinessStorePrice(product);
         if (purchasePlatform === 'android' && PRO_PRODUCT_TYPE === 'subscription' && !offerToken) {
           throw new Error(
             `Google Play returned ${product.productId}, but no eligible subscription base plan or offer was available for this account.`
@@ -1213,7 +1290,8 @@ export default function App() {
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
           ...(purchasePlatform === 'android' && offerToken ? { offerToken } : {}),
-          ...nativePurchaseUserOptions(purchaseUser?.uid)
+          ...(purchasePlatform === 'android' && replacement ? {oldProductId:replacement.productId,oldPurchaseToken:androidReplacementToken(replacement.purchase.receipt)} : {}),
+          ...(purchasePlatform === 'ios' ? {userId:crypto.randomUUID()} : nativePurchaseUserOptions(purchaseUser?.uid))
         } as any) as any;
         console.info('[BillingDiagnostics] Native purchase call completed', {
           productId: product.productId,
@@ -1224,10 +1302,19 @@ export default function App() {
         });
 
         if (transaction?.transactionId || transaction?.status === 'purchased') {
+          if(purchasePlatform==='ios'&&replacement){
+            const refreshed=await InAppPurchase.getActivePurchases({});
+            const current=purchaseTier(refreshed.purchases);
+            if(!current)throw Error('The plan change is processing. Restore Purchases to refresh access; do not pay again.');
+            await handleSuccessfulPurchase({promptForAccount:true,tier:current,purchases:refreshed.purchases});
+            if(current!==upgradeTier)alert('Your plan change is scheduled with Apple. Your current plan remains available until Apple applies the change at renewal.');
+            return;
+          }
+          if (transaction.productId !== product.productId) throw Error('The store returned a different product. Use Restore Purchases; do not purchase again.');
           console.log("App: Native Purchase success ->", transaction.transactionId);
-          await handleSuccessfulPurchase({ promptForAccount: true });
+          await handleSuccessfulPurchase({ promptForAccount: true, tier:upgradeTier, purchases:[transaction] });
         } else if (transaction?.status === 'pending') {
-          alert('Your purchase is pending approval in the store. Pro will unlock once the purchase completes.');
+          alert('Your purchase is pending approval in the store. Your subscription will unlock once the purchase completes.');
         } else {
           throw new Error(transaction?.errorMessage || transaction?.errorCode || 'The store did not complete the purchase.');
         }
@@ -1236,8 +1323,9 @@ export default function App() {
         const failedAttemptDiagnostics = await readAndroidBillingDiagnostics('Go Pro purchase attempt failed');
         try {
           const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(purchaseUser?.uid));
-          if (hasStoreProEntitlement(purchases)) {
-            await handleSuccessfulPurchase({ promptForAccount: true });
+          const tier = purchaseTier(purchases);
+          if (tier === upgradeTier) {
+            await handleSuccessfulPurchase({ promptForAccount: true, tier, purchases });
             return;
           }
         } catch (restoreError) {
@@ -1256,40 +1344,42 @@ export default function App() {
           : ` Google Play response: ${billingResponse}${billingStage ? ` at ${billingStage}` : ''}.`;
         alert(`Purchase failed: ${failureMessage}.${billingDetail} Please try again.`);
       } finally {
+        purchaseAttempt.current = false;
         setIsUpgrading(false);
       }
       return;
     }
 
-    // Fallback to Stripe for Web
+  };
+
+  const manageExistingWebSubscription = async () => {
     try {
-      console.log("App: Falling back to Stripe checkout session...");
-      const response = await fetch(getApiUrl('/api/create-checkout-session'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: purchaseUser!.uid, email: purchaseUser!.email }),
+      const current = auth.currentUser;
+      if (!current) { openAuthModal(false, false); return; }
+      const response = await fetch(billingApiUrl('/api/subscriptions/manage-web'), {
+        method: 'POST', headers: { Authorization: `Bearer ${await current.getIdToken()}` },
+        signal: AbortSignal.timeout(20000),
       });
-
-      const { url, error } = await response.json();
-      if (error) throw new Error(error);
-
-      // Open Stripe in a new tab to avoid iframe blocking
-      if (url) {
-        console.log("App: Redirecting to Stripe ->", url);
-        await openExternalUrl(url);
-        setShowUpgradeModal(false);
-      }
+      const result = await response.json();
+      if (!response.ok) throw Error(result.error || 'Subscription management is unavailable.');
+      const url = new URL(result.url);
+      if (url.protocol !== 'https:' || url.hostname !== 'billing.stripe.com') throw Error('Invalid billing management link.');
+      await openExternalUrl(url.href);
     } catch (error) {
-      console.error("Checkout failed", error);
-      // Fallback for demo if Stripe keys aren't set
-      setShowUpgradeModal(true);
-    } finally {
-      setIsUpgrading(false);
+      alert(error instanceof Error ? error.message : 'Subscription management is unavailable.');
     }
   };
 
+  const coreIssue = (cableCoreType === CableCoreType.SINGLE_CORE) !== (cableType === CableType.PVC_SINGLE)
+    ? 'The selected cable construction does not match the core selection. Select a matching cable type.' : null;
+  const selectionIssue = coreIssue || (mode === AppMode.CABLE_FINDER
+    ? getCombinationIssue(cableType, method, supplyType)
+    : getCircuitInputIssue(cableType, method, supplyType, 30, 1, deviceType, cableOptions));
+  const sourceIds = getSourceIdsForTool(mode, cableType);
+
   const result = useMemo(() => {
     if (mode === AppMode.SMART_CIRCUIT || mode === AppMode.VOLTAGE_DROP) {
+      if (selectionIssue) return null;
       return calculateCircuit(
         parseFloat(loadKw) || 0,
         parseFloat(lengthM) || 0,
@@ -1299,12 +1389,14 @@ export default function App() {
         circuitType,
         30, // ambientTemp
         1,  // groupingCount
-        parseFloat(ze) || 0.35,
-        deviceType
+        ze.trim() === '' ? NaN : Number(ze),
+        deviceType,
+        undefined,
+        cableOptions
       );
     }
     return null;
-  }, [loadKw, lengthM, supplyType, method, cableType, circuitType, mode, ze, deviceType]);
+  }, [loadKw, lengthM, supplyType, method, cableType, circuitType, mode, ze, deviceType, selectionIssue, cableOptions]);
 
   const threePhaseResult = useMemo(() => {
     if (mode === AppMode.THREE_PHASE) {
@@ -1327,12 +1419,12 @@ export default function App() {
   const cableFinderResult = useMemo(() => {
     if (mode === AppMode.CABLE_FINDER) {
       const current = parseFloat(targetCurrent) || 0;
-      if (current <= 0) return null;
-      const cableSizes = CABLE_DATABASE[cableType];
+      if (!Number.isFinite(current) || current <= 0 || selectionIssue) return null;
+      const cableSizes = getCableRows(cableType, method, supplyType, cableOptions.operatingTemperature);
       return cableSizes.find(c => c.capacity[method] >= current);
     }
     return null;
-  }, [targetCurrent, method, cableType, mode]);
+  }, [targetCurrent, method, cableType, mode, selectionIssue, supplyType, cableOptions]);
 
   const currentHistoryPayload = useMemo<HistorySavePayload | null>(() => {
     if (mode === AppMode.CABLE_FINDER) {
@@ -1342,13 +1434,15 @@ export default function App() {
       return {
         type: 'cable_finder',
         title: `Cable Finder: ${target}A`,
-        inputs: { targetCurrent, cableCoreType, cableType, method },
+        inputs: { targetCurrent, cableCoreType, cableType, method, supplyType, operatingTemperature: cableOptions.operatingTemperature },
         results: {
           recommendedCableSize: cableFinderResult.size,
           methodCapacity: cableFinderResult.capacity[method],
           mvAm: cableFinderResult.mvAm,
           spareCapacity: cableFinderResult.capacity[method] - target,
-          isAdequate: true
+          isAdequate: true,
+          ratingTable: cableFinderResult.ratingTable, capacityColumn: cableFinderResult.capacityColumn,
+          loadedConductors: cableFinderResult.loadedConductors, operatingTemperature: cableFinderResult.operatingTemperature
         }
       };
     }
@@ -1359,8 +1453,9 @@ export default function App() {
         title: mode === AppMode.VOLTAGE_DROP
           ? `AC Voltage Drop: ${loadKw}kW / ${lengthM}m`
           : `Circuit: ${loadKw}kW / ${lengthM}m`,
-        inputs: { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType },
+        inputs: { loadKw, lengthM, supplyType, cableCoreType, cableType, method, circuitType, ze, deviceType, ...cableOptions },
         results: {
+          ...result,
           cableSize: result.cableSize,
           protectiveDevice: result.protectiveDevice,
           voltageDrop: result.voltageDrop,
@@ -1373,7 +1468,7 @@ export default function App() {
     }
 
     return null;
-  }, [mode, targetCurrent, cableFinderResult, cableCoreType, cableType, method, result, loadKw, lengthM, supplyType, circuitType, ze, deviceType]);
+  }, [mode, targetCurrent, cableFinderResult, cableCoreType, cableType, method, result, loadKw, lengthM, supplyType, circuitType, ze, deviceType, cableOptions]);
 
   useEffect(() => {
     setHistorySaveStatus('idle');
@@ -1416,7 +1511,7 @@ export default function App() {
   }, [mode, showResults]);
 
   const handleShareResult = async (text: string) => {
-    setSharedText(text);
+    setSharedText(text.includes('DATA SOURCES -') ? text : `${text}\n\n${formatSourceNotes(sourceIds)}`);
     setShowTextShareMenu(true);
   };
 
@@ -1458,52 +1553,9 @@ export default function App() {
   };
 
   const handleDownloadSharedTextPDF = async () => {
-    if (!sharedText || isSavingTextPDF) return;
-    setIsSavingTextPDF(true);
-    try {
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'pt',
-        format: 'a4'
-      });
-      const margin = 40;
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const lineHeight = 14;
-      let y = 52;
-
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(16);
-      pdf.text('The Sparkys Mate Calculation', margin, y);
-      y += 22;
-
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(10);
-      pdf.setTextColor(90);
-      pdf.text(new Date().toLocaleDateString(), margin, y);
-      y += 28;
-
-      pdf.setTextColor(20);
-      pdf.setFont('courier', 'normal');
-      pdf.setFontSize(10);
-
-      const lines = pdf.splitTextToSize(sharedText, pageWidth - margin * 2);
-      lines.forEach((line: string) => {
-        if (y > pageHeight - margin) {
-          pdf.addPage();
-          y = margin;
-        }
-        pdf.text(line, margin, y);
-        y += lineHeight;
-      });
-
-      const pdfDataUrl = pdf.output('datauristring');
-      await downloadFile(pdfDataUrl, `bs7671-calculation-${Date.now()}.pdf`, 'application/pdf');
-      setTimeout(() => setIsSavingTextPDF(false), 2000);
-    } catch (err) {
-      console.error('Error generating text PDF:', err);
-      setIsSavingTextPDF(false);
-    }
+    if (!sharedText) return;
+    window.dispatchEvent(new CustomEvent('sparkys-preview-calculation', {detail:{text:sharedText}}));
+    setShowTextShareMenu(false);
   };
 
   const handleShareText = async () => {
@@ -1517,11 +1569,13 @@ Core: ${cableCoreType}
 Load: ${loadKw} kW
 Length: ${lengthM} m
 Cable: ${result.cableSize} mm²
+CPC: ${result.cpcSize ?? 'not recorded'} mm2 (${result.cpcArrangement ?? 'not recorded'})
 Device: ${result.protectiveDevice} A (${deviceType})
 V-Drop: ${result.voltageDrop.toFixed(2)}V (${result.voltageDropPercentage.toFixed(1)}%)
 Status: ${result.isCompliant ? '✅ COMPLIANT' : '❌ NON-COMPLIANT'}
 --------------------------------
 Calculated via The Sparkys Mate
+${formatSourceNotes(sourceIds, result.assumptions)}
     `.trim();
 
     const copyToClipboard = async () => {
@@ -1575,33 +1629,16 @@ Calculated via The Sparkys Mate
   };
 
   const handleDownloadPDF = async () => {
-    if (!pdfRef.current || isSavingPDF) return;
-    setIsSavingPDF(true);
-    try {
-      const dataUrl = await toPng(pdfRef.current, {
-        cacheBust: true,
-        backgroundColor: '#ffffff',
-        style: {
-          borderRadius: '0',
-        }
-      });
-
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'px',
-        format: [400, 600] // Match the report size roughly
-      });
-
-      pdf.addImage(dataUrl, 'PNG', 0, 0, 400, 600);
-      const pdfDataUrl = pdf.output('datauristring');
-
-      await downloadFile(pdfDataUrl, `bs7671-report-${Date.now()}.pdf`, 'application/pdf');
-
-      setTimeout(() => setIsSavingPDF(false), 2000);
-    } catch (err) {
-      console.error('Error generating PDF:', err);
-      setIsSavingPDF(false);
-    }
+    if (!currentHistoryPayload) return;
+    const snapshot: CalculationHistory = {
+      id: crypto.randomUUID(), userId:user?.uid || 'local',
+      type:currentHistoryPayload.type,title:currentHistoryPayload.title,
+      inputs:structuredClone(currentHistoryPayload.inputs),
+      results:{...structuredClone(currentHistoryPayload.results),dataSourceIds:sourceIds},
+      createdAt:new Date().toISOString()
+    };
+    window.dispatchEvent(new CustomEvent('sparkys-preview-calculation', {detail:{snapshot}}));
+    setShowShareMenu(false);
   };
 
   const handleSaveHistory = async () => {
@@ -1639,13 +1676,16 @@ Calculated via The Sparkys Mate
     });
   }, [currentHistoryPayload, showResults, user]);
 
-  const goHome = () => {
-    setMode(AppMode.HOME);
+  const leaveCurrentPage = (destination: AppMode) => {
+    setMode(destination);
     setShowResults(false);
     setLoadKw('');
     setLengthM('');
     setTargetCurrent('');
   };
+
+  const goHome = () => leaveCurrentPage(AppMode.HOME);
+  const goBack = () => leaveCurrentPage(backDestination(mode));
 
   const handleModeChange = (newMode: AppMode) => {
     const proModes = [
@@ -1659,33 +1699,31 @@ Calculated via The Sparkys Mate
     ];
 
     if (proModes.includes(newMode) && !effectiveIsPro) {
-      setShowUpgradeModal(true);
+      openUpgrade('pro');
       return;
     }
     setMode(newMode);
     setShowResults(false);
 
-    // Update recent tools
-    setRecentTools(prev => {
-      const filtered = prev.filter(t => t !== newMode);
-      return [newMode, ...filtered].slice(0, 3);
-    });
+    recordToolUse(newMode, user?.uid);
+    if (newMode === AppMode.PROJECTS) setHomeProjectId('');
   };
 
-  const renderHome = () => (
+  const renderHome = (catalogue = false) => (
     <motion.div
+      key={catalogue ? 'design' : 'home'}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="grid grid-cols-1 sm:grid-cols-2 gap-4"
     >
-      <div className="sm:col-span-2 mb-4 sm:mb-6 flex justify-between items-start gap-4">
+      {!catalogue && <><div className="sm:col-span-2 mb-4 sm:mb-6 flex justify-between items-start gap-4">
         <div>
           <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">The Sparkys Mate</h2>
           <p className="text-gray-500 text-sm font-medium">Precision electrical engineering suite.</p>
         </div>
         {!effectiveIsPro && (
           <button
-            onClick={() => setShowUpgradeModal(true)}
+            onClick={() => openUpgrade('pro')}
             className="bg-emerald-500/10 text-emerald-500 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
           >
             <Crown size={12} />
@@ -1731,7 +1769,7 @@ Calculated via The Sparkys Mate
           </div>
         </div>
         <p className="text-gray-500 text-[10px] mt-4 leading-relaxed italic">
-          * Calculations are based on {regulatoryInfo.version} {regulatoryInfo.amendment} requirements.
+          * Regulatory news does not update the calculation tables. Dataset sources and editions are shown with each tool; legacy data is not source-verified.
         </p>
         {regulatoryCheckMessage && (
           <p className="text-emerald-400 text-[10px] mt-3 leading-relaxed">
@@ -1740,30 +1778,14 @@ Calculated via The Sparkys Mate
         )}
       </div>
 
-      {recentTools.length > 0 && (
-        <div className="sm:col-span-2 mb-2">
-          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3 ml-1">Recently Used</p>
-          <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-            {recentTools.map((t) => (
-              <button
-                key={t}
-                onClick={() => handleModeChange(t)}
-                className="px-4 py-3 bg-hardware-card border border-hardware-border rounded-2xl flex items-center gap-2 shrink-0 hover:border-emerald-500/30 transition-colors"
-              >
-                {t === AppMode.SMART_CIRCUIT && <Cpu size={14} className="text-emerald-500" />}
-                {t === AppMode.PROTECTIVE_DEVICE_SELECTOR && <Zap size={14} className="text-emerald-500" />}
-                {t === AppMode.DC_VOLTAGE_DROP && <TrendingDown size={14} className="text-emerald-500" />}
-                {t === AppMode.VOLTAGE_DROP && <Waves size={14} className="text-blue-500" />}
-                {t === AppMode.THREE_PHASE && <Zap size={14} className="text-orange-500" />}
-                {t === AppMode.CABLE_FINDER && <Search size={14} className="text-purple-500" />}
-                <span className="text-[10px] font-bold text-white uppercase tracking-wider">
-                  {t.replace('_', ' ')}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <HomeSummary key={user?.uid || 'guest'} uid={user?.uid} business={effectiveIsBusiness} pro={effectiveIsPro}
+        upgradeBusiness={() => openUpgrade('business')}
+        openTool={handleModeChange} openProjects={() => handleModeChange(AppMode.PROJECTS)}
+        openProject={id => { setHomeProjectId(id); setMode(AppMode.PROJECTS); setShowResults(false); }} />
+      </>}
+
+      {catalogue && <>
+      <h2 className="sm:col-span-2 text-xl font-bold text-white">Calculation &amp; Design Tools</h2>
 
       {/* Free Tools Section */}
       <p className="sm:col-span-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Free Tools</p>
@@ -2012,7 +2034,7 @@ Calculated via The Sparkys Mate
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="sm:col-span-2 p-6 sm:p-8 bg-emerald-500 rounded-[32px] text-black relative overflow-hidden group cursor-pointer mt-4"
-          onClick={() => setShowUpgradeModal(true)}
+          onClick={() => openUpgrade('pro')}
         >
           <div className="absolute top-0 right-0 p-12 opacity-10 group-hover:scale-110 transition-transform">
             <Crown size={120} />
@@ -2023,7 +2045,7 @@ Calculated via The Sparkys Mate
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setShowUpgradeModal(true);
+                openUpgrade('pro');
               }}
               disabled={isUpgrading}
               className="bg-black text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-zinc-900 transition-colors disabled:opacity-50 flex items-center gap-2"
@@ -2040,6 +2062,7 @@ Calculated via The Sparkys Mate
           </div>
         </motion.div>
       )}
+      </>}
     </motion.div>
   );
 
@@ -2084,7 +2107,7 @@ Calculated via The Sparkys Mate
               {effectiveIsPro && (
                 <div id="pro-badge" className="bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded border border-emerald-500/20 text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
                   <Star size={8} fill="currentColor" />
-                  Pro
+                  {effectiveIsBusiness ? 'Business' : 'Pro'}
                 </div>
               )}
               {user ? (
@@ -2125,10 +2148,12 @@ Calculated via The Sparkys Mate
         </button>
       )}
 
-      <main className={`${mode === AppMode.HOME ? 'max-w-2xl' : 'max-w-lg'} mx-auto px-4 sm:px-6 pt-5 sm:pt-6 ${cleanMode ? 'pb-6' : 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]'}`}>
+      <main className={`${mode === AppMode.PROJECTS ? 'max-w-4xl' : mode === AppMode.HOME || mode === AppMode.DESIGN ? 'max-w-2xl' : 'max-w-lg'} mx-auto px-4 sm:px-6 pt-5 sm:pt-6 ${cleanMode ? 'pb-6' : 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]'}`}>
         <AnimatePresence mode="wait">
           {mode === AppMode.HOME ? (
             renderHome()
+          ) : mode === AppMode.DESIGN ? (
+            renderHome(true)
           ) : mode === AppMode.ZS_CALCULATOR ? (
             <motion.div
               key={mode}
@@ -2138,7 +2163,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1">Zs Calculator</h2>
@@ -2154,7 +2179,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-orange-500">Fault Current</h2>
@@ -2170,7 +2195,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-blue-500">Cable Resistance</h2>
@@ -2186,7 +2211,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-purple-500">Max Cable Length</h2>
@@ -2202,7 +2227,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-emerald-500">TT Earth Electrode</h2>
@@ -2218,7 +2243,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-emerald-500">Smart Circuit Designer</h2>
@@ -2234,7 +2259,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-emerald-500">Protective Device Selector</h2>
@@ -2250,7 +2275,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-emerald-500">DC Voltage Drop</h2>
@@ -2266,7 +2291,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-orange-500">Power Calculator</h2>
@@ -2282,13 +2307,33 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-emerald-500">3-Phase Motor Calculator</h2>
               </div>
               <ThreePhaseMotorCalculator onShare={handleShareResult} />
             </motion.div>
+          ) : mode === AppMode.PROJECTS ? (
+            !effectiveIsBusiness ? <section className="py-5">
+              <div className="flex items-center gap-3 text-emerald-500 mb-5"><Crown size={28}/><h2 className="text-2xl font-bold">Business</h2></div>
+              <p className="text-xl font-bold mb-2">£14.99/month</p>
+              <p className="text-gray-400 text-sm mb-6">All Pro tools plus Projects, quotes, invoices and branded client documents.</p>
+              <button onClick={()=>openUpgrade('business')} className="w-full min-h-14 bg-emerald-500 text-black px-4 py-4 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2"><Crown size={18}/>Get Business</button>
+              <BusinessArchive onSignIn={()=>openAuthModal(false)}/>
+            </section> : <ProjectsWorkspace key={user?.uid || 'guest'} initialProjectId={homeProjectId} onSignIn={() => setShowLoginModal(true)} onReopen={snapshot => {
+              const input = snapshot.inputs;
+              if (!['circuit', 'cable_finder'].includes(snapshot.type) || (snapshot.type === 'circuit' && input.loadKw === undefined)) return false;
+              if (input.supplyType) setSupplyType(input.supplyType);
+              if (input.cableCoreType) setCableCoreType(input.cableCoreType);
+              if (input.cableType) setCableType(input.cableType);
+              if (input.method) setMethod(input.method);
+              if (snapshot.type === 'cable_finder') {setTargetCurrent(String(input.targetCurrent));setMode(AppMode.CABLE_FINDER);}
+              else {setLoadKw(String(input.loadKw));setLengthM(String(input.lengthM));setZe(String(input.ze ?? '0.35'));setCircuitType(input.circuitType || CircuitType.OTHER);setDeviceType(input.deviceType || DeviceType.MCB_B);setMode(AppMode.VOLTAGE_DROP);}
+              const options = {...input};
+              for (const key of ['loadKw','lengthM','ze','method','cableType','supplyType','cableCoreType','deviceType','circuitType','targetCurrent']) delete options[key];
+              setCableOptions(options);setShowResults(false);return true;
+            }}/>
           ) : mode === AppMode.HISTORY ? (
             <motion.div
               key={mode}
@@ -2298,14 +2343,12 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1 text-blue-500">Calculation History</h2>
               </div>
-              <History onSelect={(item) => {
-                // Future: logic to load history item back into calculator
-              }} />
+              <History key={user?.uid || 'guest'} userId={user?.uid} onSelect={item => window.dispatchEvent(new CustomEvent('sparkys-save-to-project', {detail:item}))} />
             </motion.div>
           ) : mode === AppMode.PRIVACY ? (
             <motion.div
@@ -2316,7 +2359,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-6">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1">Privacy Policy</h2>
@@ -2324,16 +2367,18 @@ Calculated via The Sparkys Mate
 
               <div className="bg-hardware-card p-5 sm:p-6 rounded-3xl border border-hardware-border space-y-5 text-sm text-gray-400 leading-relaxed">
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-                  Last updated: 15 June 2026
+                  Data-handling summary updated: {PRIVACY_NOTICE_VERSION}
                 </p>
                 <p>
-                  This Privacy Policy explains how The Sparkys Mate handles information when you use the app, create an account, save calculations, contact support, or purchase a subscription.
+                  This summary describes app data handling. Use the published privacy notice for the operator identity, lawful bases, retention periods, service providers, international transfers and complaints process. Contact privacy support for clarification or to exercise your rights.
                 </p>
 
                 <section className="space-y-2">
                   <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">1. Information We Process</h3>
                   <p>
                     Account information may include your email address, display name, profile image, authentication provider and Firebase user identifier. Calculations may be stored locally on your device and, when signed in, in your private account history.
+                    Projects can contain client names, site addresses, contact details, job photographs, notes, quotes, invoices, payments and your business profile, logo and optional bank details. Avoid unnecessary sensitive information or access codes.
+                    RAMS documents and templates may also contain site risk assessments, method statements, preparer/reviewer details and optional named briefing acknowledgements and signature images. Only record signatures with authorisation; retain and share them only where necessary.
                   </p>
                 </section>
 
@@ -2341,6 +2386,7 @@ Calculated via The Sparkys Mate
                   <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">2. How Information Is Used</h3>
                   <p>
                     Information is used to authenticate you, provide account and history features, restore Pro access, respond to support requests, maintain security, and operate and improve the toolkit.
+                    Your business normally controls its client records; the app hosts those records on your instructions. You are responsible for having an appropriate lawful basis and providing privacy information to your clients. The regulatory update lookup does not need client records or job photographs.
                   </p>
                 </section>
 
@@ -2361,7 +2407,7 @@ Calculated via The Sparkys Mate
                 <section className="space-y-2">
                   <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">5. Retention and Deletion</h3>
                   <p>
-                    Account information and cloud calculation history are retained while your account remains active. You can permanently delete your account and associated cloud history from Settings. Local history remains on a device until removed in the app or the app data is cleared.
+                    Settings lets you export private account records, clear device copies and submit an account-deletion request. Requests are reviewed before erasure, including any legal requirement to retain financial records. A request is not confirmation of completed deletion. Device copies and previously shared or downloaded files need separate attention. Deleting an account does not cancel a store or web subscription.
                   </p>
                 </section>
 
@@ -2369,6 +2415,7 @@ Calculated via The Sparkys Mate
                   <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">6. Security and Your Rights</h3>
                   <p>
                     Reasonable technical safeguards are used, but no online service can guarantee absolute security. Depending on your location, you may request access, correction or deletion of personal information by contacting support.
+                    Downloaded project and invoice records can remain available offline on this device. Protect the device with a screen lock and avoid shared devices. Current offline caches do not provide additional app-level encryption. Internal backups may contain client details, bank details and private costs: do not send them as client documents.
                   </p>
                 </section>
 
@@ -2382,7 +2429,7 @@ Calculated via The Sparkys Mate
                 <section className="space-y-2">
                   <h3 className="text-white font-bold uppercase text-[10px] tracking-widest">8. Contact</h3>
                   <p>
-                    Privacy and data requests can be sent to <a href={SUPPORT_EMAIL} className="text-emerald-500 underline">tommyholm@hotmail.co.uk</a>.
+                    Privacy requests and complaints can be sent to <a href={PRIVACY_CONTACT_URL} className="text-emerald-500 underline">{PRIVACY_CONTACT_EMAIL}</a>. Do not email passwords, purchase tokens, bank details or entire client databases. We will arrange proportionate identity verification and a secure transfer where needed.
                   </p>
                 </section>
 
@@ -2405,7 +2452,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-6">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1">Terms of Service</h2>
@@ -2501,7 +2548,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-6">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1">Account Deletion</h2>
@@ -2518,12 +2565,12 @@ Calculated via The Sparkys Mate
 
                 <div className="space-y-4 text-sm text-gray-400 leading-relaxed">
                   <p>
-                    If you wish to delete your account and all associated data, you can do so directly within the app settings or by following the instructions below.
+                    Request account deletion in Settings or contact privacy support. The request is reviewed before erasure, and support must explain any records that must lawfully be retained.
                   </p>
                   <ul className="list-disc pl-5 space-y-2">
-                    <li>All saved calculations will be permanently removed.</li>
-                    <li>Your subscription information will be disconnected.</li>
-                    <li>This action cannot be undone.</li>
+                    <li>Export private records and original PDFs before deletion is processed.</li>
+                    <li>Cancel subscriptions separately with Apple, Google Play or the original web billing provider.</li>
+                    <li>Completed erasure cannot be undone. Remove device copies and previously exported files separately.</li>
                   </ul>
                 </div>
 
@@ -2537,7 +2584,7 @@ Calculated via The Sparkys Mate
                 ) : (
                   <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
                     <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Manual Request</p>
-                    <p className="text-sm text-white">Please email <a href={SUPPORT_EMAIL} className="text-emerald-500 underline">tommyholm@hotmail.co.uk</a> with your account email to request manual deletion.</p>
+                    <p className="text-sm text-white">Contact <a href={PRIVACY_CONTACT_URL} className="text-emerald-500 underline">{PRIVACY_CONTACT_EMAIL}</a> to request deletion. Do not send passwords or client records; support will verify the request securely.</p>
                   </div>
                 )}
               </div>
@@ -2551,7 +2598,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
               <div className="flex items-center gap-3 mb-6">
-                <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="text-xl font-bold flex-1">Support & Contact</h2>
@@ -2601,7 +2648,7 @@ Calculated via The Sparkys Mate
               className="space-y-6"
             >
                 <div className="flex items-center gap-3 mb-2">
-                  <button onClick={goHome} className="text-gray-500 hover:text-white transition-colors">
+                  <button onClick={goBack} aria-label="Back" className="text-gray-500 hover:text-white transition-colors">
                     <ArrowLeft size={20} />
                   </button>
                   <h2 className="text-xl font-bold flex-1">
@@ -2613,6 +2660,7 @@ Calculated via The Sparkys Mate
                       onClick={() => {
                         setLoadKw('');
                         setLengthM('');
+                        setCableOptions({ operatingTemperature:70, cpcArrangement:'separate', autoSizeSeparateCpc:true });
                         setTargetCurrent('');
                       }}
                       className="text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-red-500 transition-colors"
@@ -2621,6 +2669,9 @@ Calculated via The Sparkys Mate
                     </button>
                   )}
                 </div>
+
+              <SourceNotes ids={sourceIds} />
+              {selectionIssue && <p role="alert" className="text-xs text-red-400 break-words">{selectionIssue}</p>}
 
               {!showResults ? (
                 <div className="space-y-6">
@@ -2736,7 +2787,7 @@ Calculated via The Sparkys Mate
                             {Object.values(CableCoreType).map((type) => (
                               <button
                                 key={type}
-                                onClick={() => setCableCoreType(type)}
+                                onClick={() => { setCableCoreType(type); setCableType(type === CableCoreType.SINGLE_CORE ? CableType.PVC_SINGLE : CableType.PVC_PVC); }}
                                 className={`py-4 px-4 rounded-2xl text-xs font-bold transition-all border ${
                                   cableCoreType === type
                                     ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20'
@@ -2755,6 +2806,8 @@ Calculated via The Sparkys Mate
                             {Object.values(CableType).map((type) => (
                               <button
                                 key={type}
+                                disabled={(cableCoreType === CableCoreType.SINGLE_CORE) !== (type === CableType.PVC_SINGLE)}
+                                title={(cableCoreType === CableCoreType.SINGLE_CORE) !== (type === CableType.PVC_SINGLE) ? 'Choose the matching core construction first.' : undefined}
                                 onClick={() => setCableType(type)}
                                 className={`py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border ${
                                   cableType === type
@@ -2783,9 +2836,12 @@ Calculated via The Sparkys Mate
                         </button>
                       </div>
                       <div className="grid gap-2 max-h-[240px] overflow-y-auto pr-1 custom-scrollbar">
-                        {allMethods.map((m) => (
+                        {allMethods.filter(entry => !getInstallationIssue(cableType, entry.id)).map((entry) => {
+                          const m = entry.id;
+                          return (
                           <button
                             key={m}
+                            aria-pressed={method === m}
                             onClick={() => setMethod(m)}
                             className={`w-full min-w-0 py-4 px-4 rounded-2xl text-xs font-bold text-left transition-all border flex items-start justify-between gap-3 ${
                               method === m
@@ -2793,29 +2849,37 @@ Calculated via The Sparkys Mate
                                 : 'bg-hardware-card text-gray-400 border-hardware-border hover:border-white/20'
                             }`}
                           >
-                            <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{m}</span>
+                            <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{entry.label}</span>
                             {method === m && <CheckCircle2 size={16} className="shrink-0" />}
                           </button>
-                        ))}
+                        ); })}
                       </div>
                     </div>
                   )}
 
+                  {mode === AppMode.CABLE_FINDER && <label className="block text-xs text-gray-400">Supply Phase
+                    <select aria-label="Supply Phase" value={supplyType} onChange={e => setSupplyType(e.target.value as SupplyType)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-2xl p-4 text-white">
+                      {Object.values(SupplyType).map(type => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                  </label>}
+                  <CableDesignControls cable={cableType} value={cableOptions} onChange={setCableOptions} temperatureOnly={mode === AppMode.CABLE_FINDER} />
                   <button
                     onClick={handleCalculate}
                     className="w-full bg-emerald-500 text-white py-5 rounded-3xl font-bold text-lg shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
                   >
-                    View Results
+                    Recalculate
                     <ChevronRight size={20} />
                   </button>
                 </div>
               ) : (
                 <div className="space-y-6">
                   {/* Results Display */}
+                  {((mode === AppMode.CABLE_FINDER && !cableFinderResult) || (mode === AppMode.VOLTAGE_DROP && !result)) && <p role="alert" className="text-xs text-red-400 break-words">{selectionIssue || 'No recorded cable/device combination satisfies these inputs. Check the load, length, device rating and available source data; no replacement row has been selected.'}</p>}
                   {mode === AppMode.CABLE_FINDER && cableFinderResult && (
                     <div className="bg-hardware-card p-6 sm:p-8 rounded-[32px] border border-hardware-border text-center relative overflow-hidden">
                       <div className="dashed-ring absolute inset-0 pointer-events-none opacity-50" />
                       <span className="block text-[10px] font-bold text-gray-500 uppercase mb-4 tracking-widest relative z-10">Recommended Size</span>
+                      <p className="text-xs text-gray-400 relative z-10">{cableFinderResult.ratingTable}, column {cableFinderResult.capacityColumn}; {cableFinderResult.loadedConductors} loaded conductors, {cableFinderResult.operatingTemperature}C. Capacity only; CPC and fault protection not assessed.</p>
                       <div className="flex items-baseline justify-center gap-2 relative z-10">
                         <span className="text-7xl font-mono font-bold tracking-tighter">{cableFinderResult.size}</span>
                         <span className="text-2xl font-bold text-purple-500">mm²</span>
@@ -2853,10 +2917,10 @@ Calculated via The Sparkys Mate
                         </div>
                         <div>
                           <h3 className="font-bold text-lg leading-tight uppercase tracking-tight">
-                            {result.isCompliant ? 'Compliant' : 'Non-Compliant'}
+                            {result.isCompliant ? 'Checks Pass' : 'Checks Fail'}
                           </h3>
                           <p className="text-[10px] font-bold uppercase tracking-wider opacity-60">
-                            {result.isCompliant ? 'Meets BS 7671 limits' : 'Exceeds allowed limits'}
+                            {result.isCompliant ? 'Recorded design checks only' : 'Review the selected constraints'}
                           </p>
                         </div>
                       </div>
@@ -2868,6 +2932,7 @@ Calculated via The Sparkys Mate
                             <span className="text-5xl sm:text-6xl font-mono font-bold tracking-tighter">{result.cableSize}</span>
                             <span className="text-xl font-bold opacity-50">mm²</span>
                           </div>
+                          <p className="text-sm mt-2">{result.cpcSize} mm2 {result.cpcArrangement === 'integral' ? 'integral copper CPC' : 'separate copper CPC'}</p>
                         </div>
                         <Zap className="absolute -right-6 -bottom-6 text-white/10 w-40 h-40 rotate-12" />
                       </div>
@@ -2926,6 +2991,7 @@ Calculated via The Sparkys Mate
                     </div>
                   )}
 
+                  <RecalculateButton inputKey={JSON.stringify(currentHistoryPayload?.inputs)} message={mode === AppMode.CABLE_FINDER ? cableFinderResult ? 'Recalculated capacity recommendation. CPC and fault protection are not assessed by Cable Finder.' : 'No supported capacity row for these inputs.' : result?.isCompliant ? 'Recalculated: recorded checks pass.' : 'No passing design within the selected constraints.'} onRecalculate={handleCalculate} />
                   <div className="flex gap-4">
                     <button
                       onClick={() => setShowResults(false)}
@@ -2965,17 +3031,19 @@ Calculated via The Sparkys Mate
             </motion.div>
           )}
         </AnimatePresence>
+        <SaveToProject key={user?.uid || 'guest'} mode={mode} hasBusiness={effectiveIsBusiness} onUpgrade={()=>openUpgrade('business')} onSignIn={() => setShowLoginModal(true)} />
+        <CalculatorDocument />
       </main>
 
       {/* Navigation Bar (Mobile Style) */}
       {!cleanMode && (
         <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a]/80 backdrop-blur-xl border-t border-white/5 px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] z-20">
-          <div className="max-w-xl mx-auto flex justify-around items-center">
+          <div className="max-w-xl mx-auto flex justify-around items-center [&>button]:min-h-11 [&>button]:min-w-11 [&>button]:flex-1">
             <button onClick={goHome} className={`flex flex-col items-center gap-1 ${mode === AppMode.HOME ? 'text-emerald-500' : 'text-gray-500'}`}>
               <LayoutGrid size={20} />
               <span className="text-[10px] font-bold uppercase">Home</span>
             </button>
-            <button onClick={() => handleModeChange(AppMode.SMART_CIRCUIT)} className={`flex flex-col items-center gap-1 ${mode === AppMode.SMART_CIRCUIT ? 'text-emerald-500' : 'text-gray-500'}`}>
+            <button onClick={() => handleModeChange(AppMode.DESIGN)} className={`flex flex-col items-center gap-1 ${mode === AppMode.DESIGN || (TOOL_MODES.includes(mode) && mode !== AppMode.CABLE_FINDER) ? 'text-emerald-500' : 'text-gray-500'}`}>
               <Calculator size={20} />
               <span className="text-[10px] font-bold uppercase">Design</span>
             </button>
@@ -2986,6 +3054,10 @@ Calculated via The Sparkys Mate
             <button onClick={() => handleModeChange(AppMode.HISTORY)} className={`flex flex-col items-center gap-1 ${mode === AppMode.HISTORY ? 'text-emerald-500' : 'text-gray-500'}`}>
               <HistoryIcon size={20} />
               <span className="text-[10px] font-bold uppercase">History</span>
+            </button>
+            <button onClick={() => handleModeChange(AppMode.PROJECTS)} className={`flex flex-col items-center justify-center min-h-11 min-w-11 gap-1 ${mode === AppMode.PROJECTS ? 'text-emerald-500' : 'text-gray-500'}`}>
+              <FolderOpen size={20} />
+              <span className="text-[10px] font-bold uppercase">Projects</span>
             </button>
           </div>
         </nav>
@@ -3111,6 +3183,7 @@ Calculated via The Sparkys Mate
                 <p className="text-[10px] text-gray-500 text-center uppercase font-bold tracking-widest">Preview</p>
                 <div className="mt-3 p-2 bg-hardware-bg rounded-2xl border border-hardware-border">
                   <div ref={shareRef} className="p-4 bg-hardware-bg text-white font-sans">
+                    <SourceNotes ids={sourceIds} expanded assumptions={result?.assumptions} />
                     <div className="flex items-center gap-3 mb-4 border-b border-white/10 pb-3">
                       <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center text-white">
                         <Cpu size={20} />
@@ -3175,8 +3248,9 @@ Calculated via The Sparkys Mate
               </div>
 
               {/* Hidden PDF Report (White Background) */}
-              <div className="fixed -left-[9999px] top-0">
+              <div aria-hidden="true" className="fixed -left-[9999px] top-0">
                 <div ref={pdfRef} className="w-[400px] p-10 bg-white text-black font-sans border border-gray-200">
+                  <SourceNotes ids={sourceIds} expanded assumptions={result?.assumptions} />
                   <div className="flex items-center gap-4 mb-8 border-b border-gray-100 pb-6">
                     <div className="w-12 h-12 bg-emerald-600 rounded-xl flex items-center justify-center text-white">
                       <Cpu size={24} />
@@ -3280,30 +3354,12 @@ Calculated via The Sparkys Mate
                 </button>
               </div>
               <div className="space-y-6 text-sm">
-                <div>
-                  <h4 className="font-bold text-emerald-500 mb-2 uppercase tracking-widest text-[10px]">Method A</h4>
-                  <p className="text-gray-400">In an insulated wall. (e.g. Twin & Earth in a stud wall with insulation).</p>
-                </div>
-                <div>
-                  <h4 className="font-bold text-emerald-500 mb-2 uppercase tracking-widest text-[10px]">Method B</h4>
-                  <p className="text-gray-400">In conduit or trunking on a wall.</p>
-                </div>
-                <div>
-                  <h4 className="font-bold text-emerald-500 mb-2 uppercase tracking-widest text-[10px]">Method C</h4>
-                  <p className="text-gray-400">Clipped direct. (Most common for domestic surface wiring).</p>
-                </div>
-                <div>
-                  <h4 className="font-bold text-emerald-500 mb-2 uppercase tracking-widest text-[10px]">Method D</h4>
-                  <p className="text-gray-400">Direct in ground or in ducting in ground.</p>
-                </div>
-                <div>
-                  <h4 className="font-bold text-emerald-500 mb-2 uppercase tracking-widest text-[10px]">Method E, F, G</h4>
-                  <p className="text-gray-400">In free air, on perforated trays, or on brackets.</p>
-                </div>
-                <div>
-                  <h4 className="font-bold text-emerald-500 mb-2 uppercase tracking-widest text-[10px]">Method 100-103</h4>
-                  <p className="text-gray-400">Specific methods for cables in contact with thermal insulation (lofts, etc).</p>
-                </div>
+                <SourceNotes ids={['installations']} />
+                {INSTALLATION_ENTRIES.map(entry => <div key={entry.id}>
+                  <h4 className="font-bold text-emerald-500 mb-2 uppercase tracking-widest text-[10px]">{entry.kind === 'reference-method' ? `Reference method ${entry.referenceMethodCode}` : `Installation ${entry.installationNumber}`}</h4>
+                  <p className="text-gray-400">{entry.label}</p>
+                  <p className="text-gray-500 text-xs">{getCombinationIssue(cableType, entry.id) || 'Legacy description and rating-column applicability are not source-verified.'}</p>
+                </div>)}
               </div>
               <button
                 onClick={() => setShowMethodInfo(false)}
@@ -3356,6 +3412,10 @@ Calculated via The Sparkys Mate
 
                 <div className="space-y-2">
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Display Options</p>
+                  <button onClick={()=>{setShowSettingsModal(false);openUpgrade(effectiveIsBusiness?'business':'pro');}} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between transition-colors group">
+                    <span className="flex items-center gap-3"><Crown size={18} className="text-emerald-500"/><span className="text-sm font-medium">Manage Subscription</span></span><ChevronRight size={16} className="text-gray-500"/>
+                  </button>
+                  {user && <button onClick={manageExistingWebSubscription} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center justify-between"><span className="text-sm">Manage Existing Web Subscription</span><ChevronRight size={16}/></button>}
                   <button
                     onClick={() => {
                       setCleanMode(true);
@@ -3380,6 +3440,19 @@ Calculated via The Sparkys Mate
                     </button>
                   )}
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1 mt-4">Legal & Support</p>
+                  <button disabled={privacyBusy} onClick={() => void handlePrivacyAction('export')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center gap-3 disabled:opacity-50">
+                    <Download size={18} /><span className="text-sm font-medium">Export Private Account Records</span>
+                  </button>
+                  <button disabled={privacyBusy} onClick={() => void handlePrivacyAction('clear')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center gap-3 disabled:opacity-50">
+                    <Shield size={18} /><span className="text-sm font-medium">Clear This Account's Device Copies</span>
+                  </button>
+                  <button onClick={() => void openExternalUrl(PRIVACY_REQUEST_URL || PRIVACY_CONTACT_URL)} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center gap-3">
+                    <Mail size={18} /><span className="text-sm font-medium">Privacy Request or Complaint</span>
+                  </button>
+                  {(privacyBusy || privacyMessage) && <p role="status" className="text-xs text-gray-400 break-words">{privacyBusy ? 'Working...' : privacyMessage}</p>}
+                  {DATA_PROCESSING_TERMS_URL && <button onClick={() => void openExternalUrl(DATA_PROCESSING_TERMS_URL)} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-left flex items-center gap-3">
+                    <FileText size={18} /><span className="text-sm font-medium">Business Data Processing Terms</span>
+                  </button>}
                   <button
                     onClick={() => {
                       setMode(AppMode.PRIVACY);
@@ -3449,6 +3522,7 @@ Calculated via The Sparkys Mate
                       onClick={() => {
                         setDeletePassword('');
                         setDeleteError(null);
+                        setDeleteSuccess(false);
                         setShowDeleteConfirm(true);
                       }}
                       className="w-full p-4 bg-red-500/10 hover:bg-red-500/20 rounded-2xl text-left flex items-center gap-3 text-red-500 transition-colors"
@@ -3459,8 +3533,10 @@ Calculated via The Sparkys Mate
                   ) : (
                     <div id="delete-confirmation-ui" className="p-4 bg-red-500/10 rounded-2xl border border-red-500/20 space-y-4">
                       <p className="text-xs text-red-500 font-bold leading-relaxed">
-                        This permanently deletes your account and cloud calculation history. Verify your identity to continue.
+                        Verify your identity to request account deletion. This does not immediately erase records.
                       </p>
+                      <p className="text-xs text-gray-400">Export records and original PDFs first. Support will review retention and process erasure. Cancel any subscription separately with its original provider.</p>
+                      <button type="button" onClick={()=>{setShowSettingsModal(false);setShowDeleteConfirm(false);handleModeChange(AppMode.PROJECTS);}}>Open Projects to export invoices</button>
                       {deletionProvider === 'password' ? (
                         <div>
                           <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2 block">
@@ -3491,7 +3567,7 @@ Calculated via The Sparkys Mate
                       )}
                       {deleteSuccess && (
                         <p className="text-[10px] text-emerald-400 bg-emerald-400/10 p-2 rounded-lg border border-emerald-400/20">
-                          Account deleted successfully. Logging out...
+                          Deletion request recorded for review. Your account has not yet been deleted. Contact privacy support for progress.
                         </p>
                       )}
                       <div className="flex gap-2">
@@ -3501,7 +3577,7 @@ Calculated via The Sparkys Mate
                           disabled={isDeletingAccount || deleteSuccess || (deletionProvider === 'password' && !deletePassword)}
                           className="flex-1 py-2 bg-red-500 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
                         >
-                          {isDeletingAccount ? "Verifying..." : "Verify & Delete"}
+                          {isDeletingAccount ? "Verifying..." : "Request Deletion"}
                         </button>
                         <button
                           id="cancel-delete-button"
@@ -3510,7 +3586,7 @@ Calculated via The Sparkys Mate
                             setDeletePassword('');
                             setDeleteError(null);
                           }}
-                          disabled={isDeletingAccount || deleteSuccess}
+                          disabled={isDeletingAccount}
                           className="flex-1 py-2 bg-white/10 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
                         >
                           Cancel
@@ -3527,7 +3603,7 @@ Calculated via The Sparkys Mate
         {showUpgradeModal && (
           <ModalSheet
             onClose={() => setShowUpgradeModal(false)}
-            ariaLabel="Upgrade to Pro"
+            ariaLabel={upgradeTier === 'business' ? 'Upgrade to Business' : 'Upgrade to Pro'}
             panelClassName="border-emerald-500/30 p-5 sm:p-7"
           >
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent" />
@@ -3539,8 +3615,12 @@ Calculated via The Sparkys Mate
               </div>
 
               <div className="text-center mb-5 sm:mb-7">
-                <h3 className="text-2xl font-bold mb-2">Unlock Pro Tools</h3>
-                <p className="text-gray-400 text-sm">Get the full BS 7671 design suite and advanced features.</p>
+                <h3 className="text-2xl font-bold mb-2">{upgradeTier === 'business' ? 'Unlock Business' : 'Unlock Pro Tools'}</h3>
+                <p className="text-gray-400 text-sm">{upgradeTier === 'business' ? '£14.99/month. All Pro tools plus your business workspace.' : 'Get the full BS 7671 design suite and advanced features.'}</p>
+                <div role="group" aria-label="Subscription plan" className="flex border border-white/10 rounded-lg overflow-hidden mt-4">
+                  <button disabled={isUpgrading} aria-pressed={upgradeTier==='pro'} onClick={()=>setUpgradeTier('pro')} className={`flex-1 min-h-11 text-xs font-bold ${upgradeTier==='pro'?'bg-emerald-500/20 text-emerald-400':'text-gray-400'}`}>Pro · £5.99/mo</button>
+                  <button disabled={isUpgrading} aria-pressed={upgradeTier==='business'} onClick={()=>setUpgradeTier('business')} className={`flex-1 min-h-11 text-xs font-bold ${upgradeTier==='business'?'bg-emerald-500/20 text-emerald-400':'text-gray-400'}`}>Business · £14.99/mo</button>
+                </div>
               </div>
 
               <div className="space-y-3 mb-5 sm:mb-7">
@@ -3567,30 +3647,32 @@ Calculated via The Sparkys Mate
                     <CheckCircle2 size={18} />
                   </div>
                   <div className="text-left">
-                    <p className="font-bold text-sm">Priority Support</p>
-                    <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Direct access to experts</p>
+                    <p className="font-bold text-sm">{upgradeTier === 'business' ? 'Projects & Business Documents' : 'Priority Support'}</p>
+                    <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">{upgradeTier === 'business' ? 'Quotes, invoices & your branding' : 'Direct access to experts'}</p>
                   </div>
                 </div>
               </div>
 
+              {effectiveIsPro && <p className="text-xs text-emerald-400 mb-4">Change your existing plan, not a second subscription. Google Play applies unused value to the replacement plan. Apple and web downgrades start at renewal; current access remains until then. Changes must use the original payment provider.</p>}
+
               <button
                 onClick={handleUpgrade}
-                disabled={isUpgrading}
+                disabled={!Capacitor.isNativePlatform() || isUpgrading || (upgradeTier === 'business' ? effectiveIsBusiness : effectiveIsPro && !effectiveIsBusiness)}
                 className="w-full min-h-14 bg-emerald-500 text-black px-4 py-4 rounded-2xl font-black uppercase tracking-wider text-[11px] sm:text-xs leading-tight text-center hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {isUpgrading ? (
+                {!Capacitor.isNativePlatform() ? 'Available in the iOS and Android app' : isUpgrading ? (
                   <>
                     <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
                     Processing...
                   </>
                 ) : (
-                  'Start 1 Month Free Trial'
+                  (upgradeTier === 'business' ? effectiveIsBusiness : effectiveIsPro && !effectiveIsBusiness) ? 'Current Plan' : effectiveIsBusiness && upgradeTier==='pro' ? 'Change to Pro · £5.99/month' : effectiveIsPro && upgradeTier==='business' ? 'Change to Business · £14.99/month' : upgradeTier === 'business' ? 'Subscribe for £14.99/month' : 'Start 1 Month Free Trial'
                 )}
               </button>
 
               {!user && Capacitor.isNativePlatform() && (
                 <p className="mt-3 text-[10px] text-gray-500 text-center leading-relaxed">
-                  You can start the trial without an account. Creating an account is optional and lets you sync Pro access across your supported devices.
+                  {upgradeTier === 'business' ? 'Purchase without registering. An account is needed to save and sync your projects and business records.' : 'You can start the trial without an account. Creating an account is optional and lets you sync Pro access across your supported devices.'}
                 </p>
               )}
 
@@ -3722,11 +3804,11 @@ Calculated via The Sparkys Mate
                   </button>
                 </div>
 
-                <p className="text-[8px] text-gray-600 text-center leading-relaxed max-w-[280px]">
-                  Payment of £5.99/mo will be charged to your account after the 1 month free trial.
+                {!Capacitor.isNativePlatform() ? <p className="text-xs text-gray-400 text-center">{STORE_ONLY_PURCHASE_MESSAGE}</p> : <p className="text-[8px] text-gray-600 text-center leading-relaxed max-w-[280px]">
+                  {upgradeTier === 'business' ? 'Business costs £14.99/month, billed monthly with no free trial. The store confirmation shows your local price. ' : effectiveIsBusiness ? 'Pro costs £5.99/month. Changing plans does not start a new free trial. Your payment provider confirms the effective date and any credit before you agree. ' : 'Payment of £5.99/mo will be charged to your account after the 1 month free trial. '}
                   Subscription automatically renews unless auto-renew is turned off at least 24-hours before the end of the current period.
                   Manage your subscription in your Account Settings.
-                </p>
+                </p>}
 
                 <button
                   onClick={() => setShowUpgradeModal(false)}
@@ -3741,7 +3823,7 @@ Calculated via The Sparkys Mate
         {showPostPurchaseAccountPrompt && (
           <ModalSheet
             onClose={() => setShowPostPurchaseAccountPrompt(false)}
-            ariaLabel="Create an account for Pro access"
+            ariaLabel="Create an account for subscription access"
             panelClassName="border-emerald-500/30 p-5 sm:p-7"
           >
             <div className="flex justify-center mb-5">
@@ -3752,7 +3834,7 @@ Calculated via The Sparkys Mate
             <div className="text-center mb-6">
               <h3 className="text-2xl font-bold mb-2">Pro Is Active</h3>
               <p className="text-gray-400 text-sm leading-relaxed">
-                Your purchase works on this device. Create an optional account with any email address to sync Pro access across your supported devices.
+                Your purchase works on this device. Create an optional account with any email address to sync access across your supported devices and save business records.
               </p>
             </div>
             <div className="space-y-3">

@@ -1,0 +1,1710 @@
+{
+  "targetEdition": null,
+  "authoritativeSourceDocumentsSupplied": 0,
+  "sourceVerifiedDatasets": 0,
+  "sourceVerifiedRows": 0,
+  "distributionPermission": "not supplied",
+  "completenessVerified": false,
+  "publicReferenceCableDatasets": [
+    {
+      "sourceId": "cable-pvc-flat",
+      "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+      "tables": "4D5",
+      "cases": [
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method A - Thermally insulated wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16
+          ],
+          "ratingTable": "4D5",
+          "capacityColumn": "6",
+          "voltageDropColumn": "9"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method B - In conduit or trunking on a wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16
+          ],
+          "ratingTable": "4D5",
+          "capacityColumn": "7",
+          "voltageDropColumn": "9"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16
+          ],
+          "ratingTable": "4D5",
+          "capacityColumn": "8",
+          "voltageDropColumn": "9"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Method 100 - Above plasterboard ceiling; insulation up to 100mm",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16
+          ],
+          "ratingTable": "4D5",
+          "capacityColumn": "2",
+          "voltageDropColumn": "9"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Method 101 - Above plasterboard ceiling; insulation over 100mm",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16
+          ],
+          "ratingTable": "4D5",
+          "capacityColumn": "3",
+          "voltageDropColumn": "9"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Installation 102 - In timber stud wall, cable touching the wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16
+          ],
+          "ratingTable": "4D5",
+          "capacityColumn": "4",
+          "voltageDropColumn": "9"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Installation 103 - In timber stud wall, cable not touching the wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16
+          ],
+          "ratingTable": "4D5",
+          "capacityColumn": "5",
+          "voltageDropColumn": "9"
+        }
+      ]
+    },
+    {
+      "sourceId": "cable-pvc-armoured",
+      "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+      "tables": "4D4A/4D4B",
+      "cases": [
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "2",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method D1 - Multicore armoured cable in a duct in the ground",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "6",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method E - Multi-core cable in free air or on perforated cable tray",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "4",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "3",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method D1 - Multicore armoured cable in a duct in the ground",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "7",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method E - Multi-core cable in free air or on perforated cable tray",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "5",
+          "voltageDropColumn": "4"
+        }
+      ]
+    },
+    {
+      "sourceId": "cable-xlpe-armoured",
+      "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+      "tables": "4D4A/4D4B (run at 70C); 4E4A/4E4B (90C confirmed)",
+      "cases": [
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "2",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method D1 - Multicore armoured cable in a duct in the ground",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "6",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method E - Multi-core cable in free air or on perforated cable tray",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "4",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "3",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method D1 - Multicore armoured cable in a duct in the ground",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "7",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method E - Multi-core cable in free air or on perforated cable tray",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D4A/4D4B",
+          "capacityColumn": "5",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 90,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4E4A/4E4B",
+          "capacityColumn": "2",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 90,
+          "method": "Reference method D1 - Multicore armoured cable in a duct in the ground",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4E4A/4E4B",
+          "capacityColumn": "6",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 90,
+          "method": "Reference method E - Multi-core cable in free air or on perforated cable tray",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4E4A/4E4B",
+          "capacityColumn": "4",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 90,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4E4A/4E4B",
+          "capacityColumn": "3",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 90,
+          "method": "Reference method D1 - Multicore armoured cable in a duct in the ground",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4E4A/4E4B",
+          "capacityColumn": "7",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 90,
+          "method": "Reference method E - Multi-core cable in free air or on perforated cable tray",
+          "sizes": [
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4E4A/4E4B",
+          "capacityColumn": "5",
+          "voltageDropColumn": "4"
+        }
+      ]
+    },
+    {
+      "sourceId": "cable-pvc-single",
+      "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+      "tables": "4D1A/4D1B",
+      "cases": [
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method A - Thermally insulated wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4D1A/4D1B",
+          "capacityColumn": "2",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method B - In conduit or trunking on a wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D1A/4D1B",
+          "capacityColumn": "4",
+          "voltageDropColumn": "3"
+        },
+        {
+          "supply": "Single Phase (230V)",
+          "operatingTemperature": 70,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D1A/4D1B",
+          "capacityColumn": "6",
+          "voltageDropColumn": "4"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method A - Thermally insulated wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300
+          ],
+          "ratingTable": "4D1A/4D1B",
+          "capacityColumn": "3",
+          "voltageDropColumn": "6"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method B - In conduit or trunking on a wall",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D1A/4D1B",
+          "capacityColumn": "5",
+          "voltageDropColumn": "6"
+        },
+        {
+          "supply": "Three Phase (400V)",
+          "operatingTemperature": 70,
+          "method": "Reference method C - Clipped direct",
+          "sizes": [
+            1,
+            1.5,
+            2.5,
+            4,
+            6,
+            10,
+            16,
+            25,
+            35,
+            50,
+            70,
+            95,
+            120,
+            150,
+            185,
+            240,
+            300,
+            400
+          ],
+          "ratingTable": "4D1A/4D1B",
+          "capacityColumn": "7",
+          "voltageDropColumn": "7"
+        }
+      ]
+    }
+  ],
+  "retainedLegacyData": {
+    "cables": [
+      {
+        "type": "70°C PVC (Twin & Earth)",
+        "sourceId": "cable-pvc-flat",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "tableClaim": "4D5",
+        "sizes": [
+          1,
+          1.5,
+          2.5,
+          4,
+          6,
+          10,
+          16
+        ],
+        "rows": 7,
+        "legacyColumns": 49,
+        "sourceVerifiedColumns": 0
+      },
+      {
+        "type": "70°C PVC Armoured (SWA)",
+        "sourceId": "cable-pvc-armoured",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "tableClaim": "4D4A/4D4B",
+        "sizes": [
+          1.5,
+          2.5,
+          4,
+          6,
+          10,
+          16,
+          25,
+          35,
+          50,
+          70,
+          95,
+          120,
+          150,
+          185,
+          240,
+          300,
+          400
+        ],
+        "rows": 17,
+        "legacyColumns": 50,
+        "sourceVerifiedColumns": 0
+      },
+      {
+        "type": "90°C XLPE Armoured (SWA)",
+        "sourceId": "cable-xlpe-armoured",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "tableClaim": "4D4A/4D4B (run at 70C); 4E4A/4E4B (90C confirmed)",
+        "sizes": [
+          1.5,
+          2.5,
+          4,
+          6,
+          10,
+          16,
+          25,
+          35,
+          50,
+          70,
+          95,
+          120,
+          150,
+          185,
+          240,
+          300,
+          400
+        ],
+        "rows": 17,
+        "legacyColumns": 50,
+        "sourceVerifiedColumns": 0
+      },
+      {
+        "type": "70°C PVC Single Core",
+        "sourceId": "cable-pvc-single",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "tableClaim": "4D1A/4D1B",
+        "sizes": [
+          1,
+          1.5,
+          2.5,
+          4,
+          6,
+          10,
+          16,
+          25,
+          35,
+          50,
+          70,
+          95,
+          120,
+          150,
+          185,
+          240,
+          300,
+          400
+        ],
+        "rows": 18,
+        "legacyColumns": 53,
+        "sourceVerifiedColumns": 0
+      }
+    ],
+    "methods": [
+      {
+        "id": "Method A (Thermally insulated wall)",
+        "kind": "reference-method",
+        "installationNumber": null,
+        "referenceMethodCode": "A",
+        "label": "Reference method A - Thermally insulated wall",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method B (In conduit or trunking on a wall)",
+        "kind": "reference-method",
+        "installationNumber": null,
+        "referenceMethodCode": "B",
+        "label": "Reference method B - In conduit or trunking on a wall",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method C (Clipped direct)",
+        "kind": "reference-method",
+        "installationNumber": null,
+        "referenceMethodCode": "C",
+        "label": "Reference method C - Clipped direct",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method D (In conduit or duct in the ground)",
+        "kind": "reference-method",
+        "installationNumber": null,
+        "referenceMethodCode": "D",
+        "label": "Reference method D1 - Multicore armoured cable in a duct in the ground",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method E (Multi-core cable in free air or on perforated cable tray)",
+        "kind": "reference-method",
+        "installationNumber": null,
+        "referenceMethodCode": "E",
+        "label": "Reference method E - Multi-core cable in free air or on perforated cable tray",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method F (Single-core cables in free air or on perforated cable tray)",
+        "kind": "reference-method",
+        "installationNumber": null,
+        "referenceMethodCode": "F",
+        "label": "Reference method F - Single-core cables in free air or on perforated cable tray",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method G (Single-core cables in free air, spaced, or on perforated cable tray)",
+        "kind": "reference-method",
+        "installationNumber": null,
+        "referenceMethodCode": "G",
+        "label": "Reference method G - Single-core cables in free air, spaced, or on perforated cable tray",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method 100 (Above plasterboard ceiling, not in contact with insulation)",
+        "kind": "legacy-installation",
+        "installationNumber": 100,
+        "referenceMethodCode": null,
+        "label": "Method 100 - Above plasterboard ceiling; insulation up to 100mm",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method 101 (Above plasterboard ceiling, covered by insulation ≤ 100mm)",
+        "kind": "legacy-installation",
+        "installationNumber": 101,
+        "referenceMethodCode": null,
+        "label": "Method 101 - Above plasterboard ceiling; insulation over 100mm",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method 102 (In timber stud wall, cable touching the wall)",
+        "kind": "legacy-installation",
+        "installationNumber": 102,
+        "referenceMethodCode": null,
+        "label": "Installation 102 - In timber stud wall, cable touching the wall",
+        "sourceId": "installations"
+      },
+      {
+        "id": "Method 103 (In timber stud wall, cable not touching the wall)",
+        "kind": "legacy-installation",
+        "installationNumber": 103,
+        "referenceMethodCode": null,
+        "label": "Installation 103 - In timber stud wall, cable not touching the wall",
+        "sourceId": "installations"
+      }
+    ],
+    "protection": [
+      {
+        "device": "60898 Type B",
+        "ratings": [
+          6,
+          10,
+          16,
+          20,
+          25,
+          32,
+          40,
+          50,
+          63,
+          80,
+          100,
+          125
+        ],
+        "sourceVerified": false
+      },
+      {
+        "device": "60898 Type C",
+        "ratings": [
+          6,
+          10,
+          16,
+          20,
+          25,
+          32,
+          40,
+          50,
+          63,
+          80,
+          100,
+          125
+        ],
+        "sourceVerified": false
+      },
+      {
+        "device": "60898 Type D",
+        "ratings": [
+          6,
+          10,
+          16,
+          20,
+          25,
+          32,
+          40,
+          50,
+          63,
+          80,
+          100,
+          125
+        ],
+        "sourceVerified": false
+      },
+      {
+        "device": "BS 88-2 (gG) 0.4s",
+        "ratings": [
+          2,
+          4,
+          6,
+          10,
+          16,
+          20,
+          25,
+          32,
+          40,
+          50,
+          63,
+          80,
+          100,
+          125,
+          160,
+          200,
+          250,
+          315,
+          400
+        ],
+        "sourceVerified": false
+      },
+      {
+        "device": "BS 88-2 (gG) 5s",
+        "ratings": [
+          2,
+          4,
+          6,
+          10,
+          16,
+          20,
+          25,
+          32,
+          40,
+          50,
+          63,
+          80,
+          100,
+          125,
+          160,
+          200,
+          250,
+          315,
+          400
+        ],
+        "sourceVerified": false
+      },
+      {
+        "device": "BS 88-3 (gG)",
+        "ratings": [
+          5,
+          10,
+          16,
+          20,
+          25,
+          32,
+          45,
+          63
+        ],
+        "sourceVerified": false
+      },
+      {
+        "device": "BS 3036 (Rewireable)",
+        "ratings": [
+          5,
+          15,
+          20,
+          30,
+          45,
+          60
+        ],
+        "sourceVerified": false
+      },
+      {
+        "device": "BS 1361 (Cartridge)",
+        "ratings": [
+          5,
+          15,
+          20,
+          30,
+          45,
+          60,
+          80,
+          100
+        ],
+        "sourceVerified": false
+      }
+    ],
+    "correctionFactors": {
+      "ambient": [
+        25,
+        30,
+        35,
+        40,
+        45,
+        50
+      ],
+      "grouping": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    "resistance": [
+      {
+        "material": "copper",
+        "sizes": [
+          1,
+          1.5,
+          2.5,
+          4,
+          6,
+          10,
+          16,
+          25,
+          35,
+          50,
+          70,
+          95,
+          120,
+          150,
+          185,
+          240,
+          300,
+          400,
+          500,
+          630
+        ]
+      },
+      {
+        "material": "aluminium",
+        "sizes": [
+          4,
+          6,
+          10,
+          16,
+          25,
+          35,
+          50,
+          70,
+          95,
+          120,
+          150,
+          185,
+          240,
+          300
+        ]
+      }
+    ],
+    "provenance": [
+      {
+        "id": "cable-unidentified",
+        "title": "Unidentified cable dataset",
+        "units": "not identified",
+        "notes": [
+          "No cable-specific source was recorded. No other cable dataset is substituted as provenance."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "cable-pvc-flat",
+        "title": "70°C PVC (Twin & Earth)",
+        "units": "mm2; A; mV/A/m",
+        "notes": [
+          "Public reference checked: https://www.elandcables.com/media/3hoka0mu/table-4d5.pdf",
+          "Phase-specific columns; no interpolation. Large-conductor voltage drop uses tabulated impedance magnitude as a conservative bound.",
+          "Air 30C; D1 ground 20C, standard burial conditions. Balanced three-phase; harmonic neutral loading not assessed. Singles C uses touching/trefoil. Non-flexible copper only.",
+          "SWA minimum 1.5mm2. Armour fault withstand is not inferred. XLPE defaults to run at 70C; 90C needs equipment manufacturer confirmation.",
+          "70C SWA ratings and temperature guidance: https://electrical.theiet.org/wiring-matters/years/2022/93-november-2022/thermoplastic-pvc-or-thermosetting-xlpe-swa-cable/; voltage drop: https://www.elandcables.com/media/of4pe0xx/table-4d4a-and-4d4b.pdf",
+          "Public references do not establish complete current-amendment verification or redistribution permission."
+        ],
+        "table": "4D5",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "cable-pvc-armoured",
+        "title": "70°C PVC Armoured (SWA)",
+        "units": "mm2; A; mV/A/m",
+        "notes": [
+          "Public reference checked: https://www.elandcables.com/media/of4pe0xx/table-4d4a-and-4d4b.pdf",
+          "Phase-specific columns; no interpolation. Large-conductor voltage drop uses tabulated impedance magnitude as a conservative bound.",
+          "Air 30C; D1 ground 20C, standard burial conditions. Balanced three-phase; harmonic neutral loading not assessed. Singles C uses touching/trefoil. Non-flexible copper only.",
+          "SWA minimum 1.5mm2. Armour fault withstand is not inferred. XLPE defaults to run at 70C; 90C needs equipment manufacturer confirmation.",
+          "70C SWA ratings and temperature guidance: https://electrical.theiet.org/wiring-matters/years/2022/93-november-2022/thermoplastic-pvc-or-thermosetting-xlpe-swa-cable/; voltage drop: https://www.elandcables.com/media/of4pe0xx/table-4d4a-and-4d4b.pdf",
+          "Public references do not establish complete current-amendment verification or redistribution permission."
+        ],
+        "table": "4D4A/4D4B",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "cable-xlpe-armoured",
+        "title": "90°C XLPE Armoured (SWA)",
+        "units": "mm2; A; mV/A/m",
+        "notes": [
+          "Public reference checked: https://www.elandcables.com/media/cnwh0k2l/table-4e4a-and-4e4b.pdf",
+          "Phase-specific columns; no interpolation. Large-conductor voltage drop uses tabulated impedance magnitude as a conservative bound.",
+          "Air 30C; D1 ground 20C, standard burial conditions. Balanced three-phase; harmonic neutral loading not assessed. Singles C uses touching/trefoil. Non-flexible copper only.",
+          "SWA minimum 1.5mm2. Armour fault withstand is not inferred. XLPE defaults to run at 70C; 90C needs equipment manufacturer confirmation.",
+          "70C SWA ratings and temperature guidance: https://electrical.theiet.org/wiring-matters/years/2022/93-november-2022/thermoplastic-pvc-or-thermosetting-xlpe-swa-cable/; voltage drop: https://www.elandcables.com/media/of4pe0xx/table-4d4a-and-4d4b.pdf",
+          "Public references do not establish complete current-amendment verification or redistribution permission."
+        ],
+        "table": "4D4A/4D4B (run at 70C); 4E4A/4E4B (90C confirmed)",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "cable-pvc-single",
+        "title": "70°C PVC Single Core",
+        "units": "mm2; A; mV/A/m",
+        "notes": [
+          "Public reference checked: https://www.elandcables.com/media/vyrp3kxq/table-4d1a-and-4d1b.pdf",
+          "Phase-specific columns; no interpolation. Large-conductor voltage drop uses tabulated impedance magnitude as a conservative bound.",
+          "Air 30C; D1 ground 20C, standard burial conditions. Balanced three-phase; harmonic neutral loading not assessed. Singles C uses touching/trefoil. Non-flexible copper only.",
+          "SWA minimum 1.5mm2. Armour fault withstand is not inferred. XLPE defaults to run at 70C; 90C needs equipment manufacturer confirmation.",
+          "70C SWA ratings and temperature guidance: https://electrical.theiet.org/wiring-matters/years/2022/93-november-2022/thermoplastic-pvc-or-thermosetting-xlpe-swa-cable/; voltage drop: https://www.elandcables.com/media/of4pe0xx/table-4d4a-and-4d4b.pdf",
+          "Public references do not establish complete current-amendment verification or redistribution permission."
+        ],
+        "table": "4D1A/4D1B",
+        "edition": "BS 7671:2018 public tables; IET A2:2022 SWA cross-check; current amendment not fully verified",
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "installations",
+        "title": "Installation and reference methods",
+        "units": "method identifiers",
+        "notes": [
+          "Letters A-G are reference-method codes, not Table 4A2 installation numbers.",
+          "Flat-cable choices 100-103 follow Table 4D5. 100: ceiling insulation <=100mm; 101: >100mm; 102: wall contact; 103: no wall contact. D is explicitly D1 (duct), not direct burial.",
+          "Construction filters only exclude incompatible choices; they do not verify a rating-table column."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "protection",
+        "title": "Protective-device design Zs limits",
+        "units": "A; ohm",
+        "notes": [
+          "BS 7671:2018+A3:2024 is claimed by the existing code, not verified from a supplied source. Exact table, notes and disconnection applicability remain unverified.",
+          "An RCD alone provides no overload or short-circuit protection. RCBO overcurrent and residual-current functions require separate data.",
+          "MCCB/ACB settings, breaking capacity, energy let-through, selectivity and backup protection require manufacturer documentation; no generic values are supplied.",
+          "Isolation/switching suitability and residual-current protection have not been assessed."
+        ],
+        "table": null,
+        "edition": "BS 7671:2018+A3:2024 (legacy claim only)",
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "ambient",
+        "title": "Ambient-temperature correction factors",
+        "units": "dimensionless; deg C",
+        "notes": [
+          "Existing factors are for the legacy 70-degree thermoplastic-in-air assumption only; no 90-degree, buried-ground or mineral-insulated factors have been supplied."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "grouping",
+        "title": "Grouping correction factors",
+        "units": "dimensionless; circuit count",
+        "notes": [
+          "Existing grouping factors have no verified arrangement/table/footnotes. They cannot establish applicability to other arrangements."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "resistance-copper",
+        "title": "Copper conductor resistance",
+        "units": "mOhm/m at assumed 20 deg C",
+        "notes": [
+          "Existing copper resistance rows are shared across tools. Conductor class, construction, source table and edition are unknown.",
+          "Resistance-only voltage-drop estimates omit reactance and do not establish current capacity, fault protection or minimum permitted conductor size."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "resistance-aluminium",
+        "title": "Aluminium conductor resistance",
+        "units": "mOhm/m at assumed 20 deg C",
+        "notes": [
+          "Only existing non-extrapolated rows are retained; conductor class, source table and edition are unknown.",
+          "A resistance row does not establish that the size is permitted for an installation."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "cpc",
+        "title": "Protective-conductor sizing assumptions",
+        "units": "mm2; mOhm/m",
+        "notes": [
+          "Legacy separate-copper CPC sizing and flat-cable conductor pairings require verification against Tables 54.1-54.8.",
+          "R1+R2 is the sum of the two recorded conductor resistances; armour and missing CPC pairings are not substituted."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "temperature",
+        "title": "Design temperature and field-test comparisons",
+        "units": "dimensionless",
+        "notes": [
+          "The legacy design estimate multiplies circuit conductor resistance only by 1.2; external Ze is not multiplied. This is a declared approximation, not a verified correction for every cable temperature.",
+          "The 0.8 field-test comparison is separate from the design Zs limit. It is not mathematically equivalent to multiplying resistance by 1.2 and does not replace a detailed calculation.",
+          "IET guidance: https://electrical.theiet.org/bs-7671-18th-edition-wiring-regulations/faqs/inspection-and-testing-faqs/"
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "manufacturer-protection",
+        "title": "Manufacturer device data",
+        "units": "A; kA; seconds; A2s",
+        "notes": [
+          "Breaking capacity must be entered from the actual device/manufacturer documentation. No default manufacturer rating is assigned.",
+          "Fault-current comparison alone does not establish device suitability, selectivity, backup protection, energy let-through, residual protection or isolation."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      },
+      {
+        "id": "voltage-drop-guidance",
+        "title": "Voltage-drop targets",
+        "units": "percent; V",
+        "notes": [
+          "Legacy AC targets are 3 percent for lighting and 5 percent for other circuits. Appendix 4 applicability, supply origin and exceptions have not been source-verified.",
+          "DC targets are user-selected design targets; AC guidance is not silently applied as a DC regulatory limit."
+        ],
+        "table": null,
+        "edition": null,
+        "verification": "unverified",
+        "licence": "not-confirmed"
+      }
+    ]
+  },
+  "sourceChecklist": [
+    {
+      "reference": "4A1",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4A2",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4A3",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4D1",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4D2",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4D3",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4D4",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4D5",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4E1",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4E2",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4E3",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4E4",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4F1",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4F2",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4F3",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4G1",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4G2",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4H1",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4H2",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4H3",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4H4",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4J1",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4J2",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4J3",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4J4",
+      "status": "source missing - not verified",
+      "requirements": "All applicable capacity/voltage-drop subtables, columns, notes and applicability; subtable suffixes must be established from the supplied edition."
+    },
+    {
+      "reference": "4B1",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4B2",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4B3",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4B4",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4B5",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4C1",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4C2",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4C3",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4C4",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4C5",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "4C6",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "52.1",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "52.2",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "52.3",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.1",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.2",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.3",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.4",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.5",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.6",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.7",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "54.8",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "41.1",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "41.2",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "41.3",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "41.4",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "Appendix 3",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "Appendix 4 voltage-drop guidance",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "537.4",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    },
+    {
+      "reference": "Sections 531-536",
+      "status": "source missing - not verified",
+      "requirements": "Complete table/section, notes, applicability, edition and correction history."
+    }
+  ],
+  "additionalRequiredSources": [
+    "Edition title/imprint, all applicable amendments, corrigenda and table index.",
+    "Permission/licence for distributing each embedded dataset in the mobile/web app.",
+    "Conductor resistance source, conductor class, material, construction and temperature conditions.",
+    "Manufacturer MCCB/ACB settings, breaking capacities, let-through energy, selectivity/backup and armour data where used."
+  ]
+}

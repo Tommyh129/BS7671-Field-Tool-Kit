@@ -1,20 +1,16 @@
-const DEFAULT_API_BASE_URL =
-  'https://ais-pre-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app';
+import { Capacitor } from '@capacitor/core';
+
+export const DEFAULT_API_BASE_URL =
+  'https://the-sparkys-mate-29962838005.europe-west1.run.app';
 
 const getFallbackBaseUrl = () => {
-  if (typeof window !== 'undefined' && window.location) {
-    const href = window.location.href;
-    if (href.includes('-dev-')) {
-      return 'https://ais-dev-cudgj6lkyex64hxupsknop-164877439791.europe-west1.run.app';
-    }
-  }
   return DEFAULT_API_BASE_URL;
 };
 
 export function getApiBaseUrl() {
   // Use current location origin if running in a standard web browser (non-Capacitor)
   if (typeof window !== 'undefined' && window.location) {
-    const isCapacitor = !!(window as any).Capacitor;
+    const isCapacitor = Capacitor.isNativePlatform();
     if (!isCapacitor) {
       const origin = window.location.origin;
       if (origin && origin !== 'null') {

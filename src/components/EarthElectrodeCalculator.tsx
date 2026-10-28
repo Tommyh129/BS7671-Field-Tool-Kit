@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Activity, Share2, AlertTriangle, CheckCircle2, History as HistoryIcon, Check } from 'lucide-react';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import RecalculateButton from './RecalculateButton';
 
 interface EarthElectrodeCalculatorProps {
   onShare: (text: string) => void;
@@ -93,6 +94,7 @@ Calculated via The Sparkys Mate
 
   return (
     <div className="space-y-6">
+      <RecalculateButton inputKey={JSON.stringify([measuredResistance,rcdRating,touchVoltageLimit,disconnectionTime])} message={Number(measuredResistance) > 0 && Number(rcdRating) > 0 && Number(touchVoltageLimit) > 0 ? `Recalculated: touch-voltage check ${calculation.isCompliant ? 'passes' : 'fails'}. Measured resistance unchanged; actual RCD operating time still requires testing.` : 'Enter a valid measured resistance, RCD rating and touch-voltage limit.'} />
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <div className="space-y-4">
           <div>

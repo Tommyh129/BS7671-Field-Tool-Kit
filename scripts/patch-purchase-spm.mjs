@@ -51,15 +51,20 @@ if (!pluginSwift.includes('CAPBridgedPlugin')) {
   );
 }
 
-pluginSwift = pluginSwift.replaceAll(
-  'let isNonConsumable = productTypeMapping[productId] == "non-consumable"',
+pluginSwift = pluginSwift.replace(
+  /let isNonConsumable = productTypeMapping\[productId\] == "non-consumable"[^\r\n]*/g,
   'let isNonConsumable = productTypeMapping[productId] == "non-consumable" || productTypeMapping[productId] == "subscription" || productTypeMapping[productId] == "subs"'
 );
 writeIfChanged(pluginPath, pluginSwift);
 
 let implementationSwift = fs.readFileSync(implementationPath, 'utf8');
-implementationSwift = implementationSwift.replaceAll(
-  'let isNonConsumable = productTypeMapping[productId] == "non-consumable"',
+if (!implementationSwift.includes('dict["subscriptionGroupId"] = subscription.subscriptionGroupID')) {
+  const anchor = 'if let subscription = product.subscription {';
+  if (!implementationSwift.includes(anchor)) throw new Error('Cannot expose Apple subscription group: expected StoreKit mapping not found.');
+  implementationSwift = implementationSwift.replace(anchor, anchor+'\n            dict["subscriptionGroupId"] = subscription.subscriptionGroupID');
+}
+implementationSwift = implementationSwift.replace(
+  /let isNonConsumable = productTypeMapping\[productId\] == "non-consumable"[^\r\n]*/g,
   'let isNonConsumable = productTypeMapping[productId] == "non-consumable" || productTypeMapping[productId] == "subscription" || productTypeMapping[productId] == "subs"'
 );
 writeIfChanged(implementationPath, implementationSwift);

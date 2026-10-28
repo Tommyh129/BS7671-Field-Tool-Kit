@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {"resolveJsonModule": true, "esModuleInterop": true},
+  "include": ["server.ts", "server/**/*.ts"],
+  "exclude": ["node_modules", "android", "ios", "build", "dist"]
+}

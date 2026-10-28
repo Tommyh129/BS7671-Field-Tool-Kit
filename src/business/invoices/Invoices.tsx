@@ -1,0 +1,110 @@
+import { useEffect, useState } from 'react';
+import { Plus, Save, FileText, Download, RefreshCw, Trash2, ArrowLeft, Undo2 } from 'lucide-react';
+import { Modal } from '../Projects';
+import { DocumentPreview, type PreviewRequest } from '../DocumentPreview';
+import { DocumentVisibility } from '../DocumentOptions';
+import { blobDataUrl } from '../pdf';
+import { readFile, saveBusiness, removeBusiness } from '../store';
+import { sellingItem, decimal, money, today, ukDate, type BusinessRecord, type Company } from '../model';
+import { downloadFile } from '../../utils/download';
+import * as C from './client';
+import { VAT_LABELS, VAT_TREATMENTS, balances, cleanDraft, creditLines, invoiceTotals, newInvoice, validateInvoice, type Invoice, type InvoiceDraft, type InvoiceLine } from './model';
+import { balancePdf, invoicePdf } from './pdf';
+
+function Field({label,value,onChange,area=false,type='text'}:{label:string;value:string;onChange:(v:string)=>void;area?:boolean;type?:string}){
+  return <label>{label}{area?<textarea value={value} maxLength={4000} onChange={e=>onChange(e.target.value)}/>:<input type={type} value={value} maxLength={2000} onChange={e=>onChange(e.target.value)}/>}</label>;
+}
+export function Invoices({uid,records,company,project,openId}:{uid:string;records:BusinessRecord[];company:Company;project?:BusinessRecord<'project'>;openId?:string}){
+  const [invoices,setInvoices]=useState<Invoice[]>([]),[selected,setSelected]=useState(''),[editing,setEditing]=useState<{id:string;value:InvoiceDraft}|null>(null);
+  const [preview,setPreview]=useState<PreviewRequest|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[pending,setPending]=useState(false);
+  const [fresh,setFresh]=useState(false);
+  const [search,setSearch]=useState(''),[status,setStatus]=useState('All'),[from,setFrom]=useState(''),[to,setTo]=useState(''),[projectFilter,setProjectFilter]=useState('');
+  const [method,setMethod]=useState('Bank transfer'),[amount,setAmount]=useState(''),[date,setDate]=useState(today()),[reference,setReference]=useState(''),[privateNote,setPrivateNote]=useState('');
+  const [reason,setReason]=useState(''),[creditDate,setCreditDate]=useState(today()),[creditAmounts,setCreditAmounts]=useState<Record<number,string>>({});
+  const drafts=records.filter(r=>!r.deleted&&r.kind==='invoiceDraft') as BusinessRecord<'invoiceDraft'>[];
+  const projects=records.filter(r=>!r.deleted&&r.kind==='project') as BusinessRecord<'project'>[];
+  const current=invoices.find(i=>i.id===selected);
+  const reload=async()=>{setInvoices(await C.loadInvoices(uid));setFresh(true);setPending(!!await C.pendingAction(uid));};
+  const run=async(action:()=>Promise<void>)=>{setBusy(true);setError('');setNotice('');try{await action();}catch(e){setError(e instanceof Error?e.message:'Invoice action failed. Retry when connected.');void C.loadInvoices(uid).then(setInvoices).catch(()=>{});}finally{setBusy(false);setPending(!!await C.pendingAction(uid).catch(()=>false));}};
+  useEffect(()=>{
+    let live=true;
+    void C.cachedInvoices(uid).then(v=>{if(live)setInvoices(v);}).catch(()=>{if(live)setError('Invoice device storage is unavailable.');});
+    void C.pendingAction(uid).then(v=>{if(live)setPending(!!v);}).catch(()=>{});
+    const update=()=>void C.loadInvoices(uid).then(v=>{if(live){setInvoices(v);setFresh(true);setError('');}}).catch(()=>{if(live){setFresh(false);setError('Cloud invoices unavailable. Cached records are shown. Check the invoice backend and connection before issuing.');}});
+    update();window.addEventListener('online',update);const timer=setInterval(update,60000);
+    return()=>{live=false;window.removeEventListener('online',update);clearInterval(timer);};
+  },[uid]);
+  useEffect(()=>{if(openId){const d=drafts.find(d=>d.id===openId);if(d)setEditing({id:d.id,value:structuredClone(d.payload)});}},[openId]);
+  const refreshResult=(i:Invoice)=>{setInvoices(v=>[...v.filter(r=>r.id!==i.id),i]);setSelected(i.id);setEditing(null);};
+  const action=(name:string,data:unknown)=>run(async()=>{if(!current)return;refreshResult(await C.mutateInvoice(uid,current.id,name,data));setNotice('Financial record saved. No payment was processed or verified.');});
+  const logo=async(draft:InvoiceDraft)=>draft.company.logoId?await blobDataUrl(await readFile(uid,'',draft.company.logoId)):undefined;
+  const pdf=(i:Invoice,creditId?:string)=>setPreview({filename:`${creditId?i.credits.find(c=>c.id===creditId)?.reference:i.reference}.pdf`,editable:false,issued:true,options:i.draft.documentOptions,generate:()=>C.originalPdf(uid,i,creditId)});
+  const availableDrafts=drafts.filter(d=>!invoices.some(i=>i.id===d.id));
+  const match=(v:InvoiceDraft,s:string,reference='')=> (!project||v.projectId===project.id)&&(!projectFilter||v.projectNumber===projectFilter)&&(!from||v.issueDate>=from)&&(!to||v.issueDate<=to)&&(status==='All'||status===s)&&(v.customer+' '+v.projectNumber+' '+v.projectTitle+' '+s+' '+reference).toLowerCase().includes(search.toLowerCase());
+  const scoped=invoices.filter(i=>(!project||i.draft.projectId===project.id)&&(!projectFilter||i.draft.projectNumber===projectFilter));
+  const outstanding=scoped.reduce((s,i)=>s+(i.state==='Issued'?balances(i).outstanding:0),0),overdue=scoped.reduce((s,i)=>s+(balances(i).overdue?balances(i).outstanding:0),0);
+  const receipts=scoped.reduce((s,i)=>s+i.payments.filter(p=>!p.reversal&&(!from||p.date>=from)&&(!to||p.date<=to)).reduce((n,p)=>n+p.amount,0),0);
+  return <section aria-label="Invoices">
+    <header><h2>{project?'Project invoices':'All invoices'}</h2><button disabled={busy} onClick={()=>void run(reload)} title="Refresh invoices"><RefreshCw size={18}/></button>
+      <button disabled={busy||!projects.length} onClick={()=>{const p=project||projects[0];setEditing({id:crypto.randomUUID(),value:newInvoice(p.id,p.payload,company)});}}><Plus size={18}/>New invoice</button>
+      <button disabled={busy} onClick={()=>void run(async()=>{const blob=await C.exportInvoiceRecords(uid,drafts);await downloadFile(await blobDataUrl(blob),`PRIVATE-invoices-records-and-pdfs-${today()}.json`,'application/json');setNotice('Private export prepared, including original PDFs, credit notes and payment history.');})}><Download size={18}/>Export invoice records + PDFs</button>
+    </header>
+    {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
+    {!fresh&&<p className="business-warning">Cached financial overview - may be incomplete. Refresh from the server before relying on these figures. Drafts remain available offline.</p>}
+    {pending&&<div className="business-warning"><p>A financial action is pending reconciliation. Retry the same action; do not create a replacement.</p><button disabled={busy} onClick={()=>void run(async()=>{refreshResult(await C.retryAction(uid));setNotice('Pending action reconciled.');})}><RefreshCw size={18}/>Retry pending action</button><button disabled={busy} onClick={()=>void run(async()=>{await C.discardPending(uid);setNotice('Uncommitted action discarded; correct the draft and retry.');})}>Discard uncommitted action</button></div>}
+    <div className="business-fields">
+      <Field label="Search customer, project, status" value={search} onChange={setSearch}/>
+      <label>Status<select value={status} onChange={e=>setStatus(e.target.value)}>{['All','Draft','Preparing','Issued','Partially paid','Paid','Credited','Void','Overdue'].map(v=><option key={v}>{v}</option>)}</select></label>
+      {!project&&<label>Project<select value={projectFilter} onChange={e=>setProjectFilter(e.target.value)}><option value="">All projects</option>{[...new Set([...projects.map(p=>p.payload.number),...invoices.map(i=>i.draft.projectNumber)])].map(n=><option key={n}>{n}</option>)}</select></label>}
+      <Field label="From date (invoice / payment period)" type="date" value={from} onChange={setFrom}/><Field label="To date (invoice / payment period)" type="date" value={to} onChange={setTo}/>
+    </div>
+    <dl><dt>Draft invoices</dt><dd>{availableDrafts.filter(d=>!project||d.projectId===project.id).length}</dd><dt>Outstanding balance (all issue dates)</dt><dd>{money(outstanding)}</dd><dt>Overdue balance (all issue dates)</dt><dd>{money(overdue)}</dd><dt>Net manually recorded payments in selected period</dt><dd>{money(receipts)}</dd></dl>
+    <p className="business-muted">Payment records are user-entered, not verified bank receipts. Figures are not profit or tax liability.</p>
+    {availableDrafts.filter(d=>match(d.payload,'Draft')).map(d=><div className="business-row" key={d.id}><button onClick={()=>setEditing({id:d.id,value:structuredClone(d.payload)})}>Draft - {d.payload.customer} | Project {d.payload.projectNumber} | {ukDate(d.payload.issueDate)}</button><button title="Delete invoice draft" disabled={busy} onClick={()=>void run(async()=>{if(confirm('Delete this unissued invoice draft?'))await removeBusiness(uid,d.id);})}><Trash2 size={18}/></button></div>)}
+    {invoices.filter(i=>match(i.draft,status==='Overdue'&&balances(i).overdue?'Overdue':balances(i).status,i.reference)).map(i=><div className="business-row" key={i.id}><button onClick={()=>{setSelected(i.id);setCreditAmounts({});setReason('');setAmount('');}}>{i.reference} - {i.draft.customer} | Project {i.draft.projectNumber} | {balances(i).status}{balances(i).overdue?' - Overdue':''} | {money(balances(i).outstanding)} outstanding</button><button title={`Preview ${i.reference}`} disabled={i.state!=='Issued'} onClick={()=>pdf(i)}><FileText size={18}/></button></div>)}
+    {!availableDrafts.length&&!invoices.length&&<p>No invoices yet.</p>}
+    {editing&&<Modal title="Invoice draft" hidden={!!preview} close={()=>setEditing(null)}>
+      {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
+      <InvoiceEditor key={editing.id} value={editing.value} projects={projects} busy={busy} save={async value=>{await run(async()=>{await saveBusiness(uid,'invoiceDraft',value.projectId,cleanDraft(value),editing.id);setNotice('Invoice draft saved locally.');});}} preview={value=>void run(async()=>{const frozen=cleanDraft(value);setPreview({filename:'DRAFT-invoice.pdf',editable:false,options:frozen.documentOptions,generate:async()=>invoicePdf(frozen,`TEMP-${editing.id.slice(0,8)}`,await logo(frozen))});})} issue={value=>void run(async()=>{validateInvoice(value);if(!confirm('Issue and freeze this invoice? A unique number and original PDF will be retained.'))return;await saveBusiness(uid,'invoiceDraft',value.projectId,cleanDraft(value),editing.id);await C.loadInvoices(uid);refreshResult(await C.mutateInvoice(uid,editing.id,'issue',undefined,cleanDraft(value)));setNotice('Invoice issued. No email was sent.');})}/>
+    </Modal>}
+    {current&&!editing&&<Modal title={current.reference} hidden={!!preview} close={()=>setSelected('')}>
+      {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
+      <button disabled={busy} onClick={()=>void run(async()=>{const blob=await C.exportInvoiceRecords(uid,[],[current.id]);await downloadFile(await blobDataUrl(blob),`PRIVATE-${current.reference}-records-and-pdfs.json`,'application/json');})}><Download size={18}/>Export this invoice, credits and payment history</button>
+      <h3>{current.draft.customer} - {balances(current).status}</h3><p>Project {current.draft.projectNumber}: {current.draft.projectTitle}</p><p>Invoice {ukDate(current.draft.issueDate)} | Due {ukDate(current.draft.dueDate)}{balances(current).overdue?' | Overdue':''}</p>
+      {current.draft.sourceQuote&&<p>Source: {current.draft.sourceQuote.reference} r{current.draft.sourceQuote.revision}</p>}
+      <dl><dt>Invoice total</dt><dd>{money(current.totals.total)}</dd><dt>Credits issued</dt><dd>{money(balances(current).credited)}</dd><dt>Payments recorded</dt><dd>{money(balances(current).paid)}</dd><dt>Outstanding</dt><dd>{money(balances(current).outstanding)}</dd><dt>Customer credit balance (no refund processed)</dt><dd>{money(balances(current).customerCredit)}</dd></dl>
+      {current.state==='Preparing'&&<><p>Number reserved. Contents are frozen; retry to finish retaining the original PDF.</p><button disabled={busy||pending} onClick={()=>void run(async()=>refreshResult(await C.mutateInvoice(uid,current.id,'issue',undefined,current.draft)))}>Retry issuing</button><Field label="Void reason (unissued reservation only)" value={reason} onChange={setReason}/><button disabled={busy} onClick={()=>void run(async()=>refreshResult(await C.voidReservation(uid,current,reason)))}>Void unissued reservation</button></>}
+      {current.state==='Issued'&&<>
+        <div className="business-actions"><button onClick={()=>pdf(current)}><FileText size={18}/>Original invoice PDF</button><button onClick={()=>setPreview({filename:`${current.reference}-balance.pdf`,editable:false,generate:async()=>balancePdf(current,await C.retainedLogo(uid,current))})}><FileText size={18}/>Current balance summary</button></div>
+        <fieldset disabled={busy||pending}><legend>Record a payment manually</legend><p>These records do not process a payment or verify receipt of funds.</p><div className="business-fields"><Field label="Payment date" type="date" value={date} onChange={setDate}/><Field label="Payment amount (GBP)" value={amount} onChange={setAmount}/><label>Method<select value={method} onChange={e=>setMethod(e.target.value)}>{['Bank transfer','Cash','Card','Other'].map(m=><option key={m}>{m}</option>)}</select></label><Field label="Payment reference" value={reference} onChange={setReference}/><Field label="Private payment note (not in client PDFs)" area value={privateNote} onChange={setPrivateNote}/></div><button onClick={()=>void action('payment',{amount,date,method,reference,privateNote})}><Save size={18}/>Record payment</button></fieldset>
+        <h3>Payment history</h3>{current.payments.map(p=><div className="business-row" key={p.id}><p>{ukDate(p.date)} | {money(p.amount)} | {p.method} | {p.reference}{p.privateNote&&` | Private: ${p.privateNote}`}{p.reversal&&` | Reversed: ${p.reversal.reason}`}</p>{!p.reversal&&<button title="Reverse payment record" disabled={busy||pending} onClick={()=>{const reason=prompt('Why is this payment record being reversed? No refund will be processed.');if(reason)void action('reversePayment',{paymentId:p.id,reason});}}><Undo2 size={18}/></button>}</div>)}
+        <fieldset disabled={busy||pending}><legend>Credit note</legend><Field label="Credit date" type="date" value={creditDate} onChange={setCreditDate}/><Field label="Credit reason" area value={reason} onChange={setReason}/>{current.draft.items.map((item,index)=>{const net=current.totals.lines[index].net-current.credits.flatMap(c=>c.lines).filter(l=>l.index===index).reduce((s,l)=>s+l.net,0);return <Field key={item.id} label={`${index+1}. ${item.description} - net credit GBP (remaining ${money(net)})`} value={creditAmounts[index]||''} onChange={v=>setCreditAmounts({...creditAmounts,[index]:v})}/>;})}
+          <button onClick={()=>setCreditAmounts(Object.fromEntries(current.totals.lines.map((l,index)=>[index,((l.net-current.credits.flatMap(c=>c.lines).filter(l=>l.index===index).reduce((s,l)=>s+l.net,0))/100).toFixed(2)])))}>Select full remaining credit</button>
+          <button onClick={()=>void run(async()=>{const amounts=Object.entries(creditAmounts).map(([index,value])=>({index:Number(index),net:decimal(value||'0')}));const lines=creditLines(current,amounts);if(!reason.trim())throw Error('Enter a credit reason.');if(!confirm(`Issue credit note for ${money(lines.reduce((s,l)=>s+l.net+l.vat,0))}? No refund will be processed.`))return;refreshResult(await C.mutateInvoice(uid,current.id,'credit',{date:creditDate,reason,amounts}));setCreditAmounts({});setReason('');})}><Save size={18}/>Issue credit note</button>
+        </fieldset>
+        <h3>Credit notes</h3>{current.credits.map(c=><div className="business-row" key={c.id}><p>{c.reference} | {ukDate(c.date)} | {money(c.total)} | {c.state} | {c.reason}</p>{c.state==='Issued'&&<button title={`Preview ${c.reference}`} onClick={()=>pdf(current,c.id)}><FileText size={18}/></button>}</div>)}
+        <fieldset disabled={busy||pending}><legend>Manually record sent date</legend><p>Exporting/sharing does not send an email or confirm receipt.</p><Field label="Sent date" type="date" value={date} onChange={setDate}/><p>Last recorded: {current.sentDate?ukDate(current.sentDate):'Not recorded'}</p><button onClick={()=>void action('sent',{date})}><Save size={18}/>Record sent date</button></fieldset>
+      </>}
+      <details><summary>Audit history</summary>{current.audit.map(e=><p key={e.id}>{ukDate(e.at)} | {e.action}{e.reason?` | ${e.reason}`:''}</p>)}</details>
+    </Modal>}
+    {preview&&<Modal title="Document preview" close={()=>setPreview(null)}><DocumentPreview request={preview}/></Modal>}
+  </section>;
+}
+
+function InvoiceEditor({value,projects,busy,save,preview,issue}:{value:InvoiceDraft;projects:BusinessRecord<'project'>[];busy:boolean;save:(v:InvoiceDraft)=>Promise<void>;preview:(v:InvoiceDraft)=>void;issue:(v:InvoiceDraft)=>void}){
+  const [v,set]=useState(()=>structuredClone(value));
+  const field=(label:string,key:keyof InvoiceDraft,area=false,type='text')=><Field label={label} value={String(v[key]??'')} onChange={s=>set({...v,[key]:s})} area={area} type={type}/>;
+  const supplier=(label:string,key:keyof Company,area=false)=><Field label={label} value={String(v.company[key]??'')} onChange={s=>set({...v,company:{...v.company,[key]:s}})} area={area}/>;
+  let total='Check invoice values';try{total=money(invoiceTotals(v).total);}catch{}
+  const changeLine=(index:number,part:Partial<InvoiceLine>)=>set({...v,items:v.items.map((i,n)=>n===index?{...i,...part}:i)});
+  return <form onSubmit={e=>{e.preventDefault();void save(v);}}><fieldset disabled={busy}><legend>Invoice details</legend><div className="business-fields">
+    <label>Project<select value={v.projectId} onChange={e=>{const p=projects.find(p=>p.id===e.target.value);if(p)set({...v,projectId:p.id,projectNumber:p.payload.number,projectTitle:p.payload.title});}}>{projects.map(p=><option key={p.id} value={p.id}>{p.payload.number} - {p.payload.title}</option>)}</select></label>
+    {field('Customer / organisation','customer')}{field('Billing address','billingAddress',true)}{field('Site address (shown separately if different)','siteAddress',true)}{field('Purchase order / customer reference','customerReference')}{field('Invoice date','issueDate',false,'date')}{field('Supply date / tax point (clear to use service period)','supplyDate',false,'date')}{!v.supplyDate&&<>{field('Service period start','serviceStart',false,'date')}{field('Service period end / tax point','serviceEnd',false,'date')}</>}{field('Payment due date','dueDate',false,'date')}
+  </div></fieldset>
+  <fieldset disabled={busy}><legend>Supplier snapshot</legend><div className="business-fields"><label>Business type<select value={v.businessType} onChange={e=>set({...v,businessType:e.target.value as InvoiceDraft['businessType']})}><option value="">Select business type</option><option value="soleTrader">Sole trader</option><option value="limited">Limited company</option><option value="other">Other legal entity</option></select></label>{supplier('Trading / business name','name')}{supplier('Legal / personal / full incorporated name','legalName')}{supplier('Supplier address','address',true)}{supplier('Supplier email','email')}{supplier('Supplier phone','phone')}{supplier('Website','website')}{supplier('Company registration number','registrationNumber')}
+    <label className="check"><input type="checkbox" checked={v.company.vatRegistered} onChange={e=>set({...v,company:{...v.company,vatRegistered:e.target.checked},items:v.items.map(i=>({...i,vat:e.target.checked?(i.vat==='nonVAT'?'standard':i.vat):'nonVAT'}))})}/>VAT registered</label>{v.company.vatRegistered&&supplier('VAT registration number','vatNumber')}{supplier('Invoice footer','invoiceFooter',true)}{supplier('Optional payment instructions','paymentInstructions',true)}{supplier('Optional bank details','bankDetails',true)}</div></fieldset>
+  <fieldset disabled={busy}><legend>Charges</legend>{v.items.map((item,index)=><fieldset key={item.id}><legend>Line {index+1}</legend><div className="business-fields"><Field label="Description" area value={item.description} onChange={description=>changeLine(index,{description})}/><Field label="Quantity" value={item.quantity} onChange={quantity=>changeLine(index,{quantity})}/><Field label="Unit" value={item.unit} onChange={unit=>changeLine(index,{unit})}/><Field label="Selling rate (GBP, excluding VAT)" value={item.rate} onChange={rate=>changeLine(index,{rate})}/><label>VAT treatment<select value={item.vat} onChange={e=>changeLine(index,{vat:e.target.value as InvoiceLine['vat']})}>{VAT_TREATMENTS.filter(t=>v.company.vatRegistered?t!=='nonVAT':t==='nonVAT').map(t=><option key={t} value={t}>{VAT_LABELS[t]}</option>)}</select></label></div><button type="button" title="Remove invoice line" onClick={()=>set({...v,items:v.items.filter((_,i)=>i!==index)})}><Trash2 size={18}/></button></fieldset>)}<button type="button" onClick={()=>set({...v,items:[...v.items,{...sellingItem(),vat:v.company.vatRegistered?'standard':'nonVAT'}]})}><Plus size={18}/>Add charge</button>
+  {field('Fixed discount (GBP, excluding VAT)','discount')}{field('Payment terms','terms',true)}{field('Customer-facing notes','notes',true)}<p>Total: {total}</p><p className="business-muted">Negative lines are not accepted. Construction domestic reverse charge is unsupported and blocks issuing.</p></fieldset>
+  <DocumentVisibility value={v.documentOptions} onChange={documentOptions=>set({...v,documentOptions})}/>
+  <footer><button disabled={busy} type="submit"><Save size={18}/>Save draft</button><button disabled={busy} type="button" onClick={()=>preview(v)}><FileText size={18}/>Preview draft</button><button disabled={busy} type="button" onClick={()=>issue(v)}><Save size={18}/>Issue invoice</button></footer></form>;
+}

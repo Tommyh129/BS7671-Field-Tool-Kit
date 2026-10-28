@@ -1,7 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Ruler, Share2, Activity, History as HistoryIcon, Check } from 'lucide-react';
-import { CABLE_RESISTANCE } from '../constants';
+import { CONDUCTOR_RESISTANCE, getResistanceSizes, formatSourceNotes } from '../data/electrical';
+import SourceNotes from './SourceNotes';
+import { InspectionCpcControl } from './CableDesignControls';
+import RecalculateButton from './RecalculateButton';
+import { InspectionCpcModel, resolveInspectionCpcSize } from '../utils/resistance';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
 
@@ -11,28 +15,31 @@ interface CableResistanceCalculatorProps {
 
 export default function CableResistanceCalculator({ onShare }: CableResistanceCalculatorProps) {
   const [cableSize, setCableSize] = useState<string>('2.5');
-  const [cpcSize, setCpcSize] = useState<string>('1.5');
+  const [manualCpcSize, setCpcSize] = useState<string>('1.5');
+  const [cpcModel, setCpcModel] = useState<InspectionCpcModel>('manual');
   const [length, setLength] = useState<string>('');
   const [material, setMaterial] = useState<'copper' | 'aluminium'>('copper');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const lastSavedHistoryRef = React.useRef<string | null>(null);
+  const sourceIds = material === 'copper' ? ['resistance-copper','cpc'] : ['resistance-aluminium'];
+  const cableSizes = getResistanceSizes(material);
+  const cpcSize = material === 'copper' && cpcModel !== 'manual'
+    ? String(resolveInspectionCpcSize(cpcModel,Number(cableSize),Number(manualCpcSize)) ?? '') : manualCpcSize;
 
   const calculation = useMemo(() => {
     const sizeVal = parseFloat(cableSize);
     const cpcVal = parseFloat(cpcSize);
     const lengthVal = parseFloat(length) || 0;
     
-    const r1_per_m = CABLE_RESISTANCE[sizeVal] || 0;
-    const r2_per_m = CABLE_RESISTANCE[cpcVal] || 0;
-
-    // Aluminium factor (approx 1.6x copper resistance)
-    const materialFactor = material === 'aluminium' ? 1.64 : 1;
-
-    const r1 = (r1_per_m * lengthVal * materialFactor) / 1000;
-    const r2 = (r2_per_m * lengthVal * materialFactor) / 1000;
+    const r1_per_m = CONDUCTOR_RESISTANCE[material][sizeVal];
+    const r2_per_m = CONDUCTOR_RESISTANCE[material][cpcVal];
+    const isValid = !!r1_per_m && !!r2_per_m && Number.isFinite(lengthVal) && lengthVal > 0;
+    const r1 = isValid ? (r1_per_m * lengthVal) / 1000 : 0;
+    const r2 = isValid ? (r2_per_m * lengthVal) / 1000 : 0;
     const totalR = r1 + r2;
 
     return {
+      isValid,
       r1,
       r2,
       totalR
@@ -40,12 +47,14 @@ export default function CableResistanceCalculator({ onShare }: CableResistanceCa
   }, [cableSize, cpcSize, length, material]);
 
   const handleShare = () => {
+    if (!calculation.isValid) return;
     const text = `
 📏 CABLE RESISTANCE CALCULATION 📏
 -------------------------
 Material: ${material.toUpperCase()}
 Cable Size: ${cableSize}mm²
 CPC Size: ${cpcSize}mm²
+CPC Model: ${material === 'copper' ? cpcModel : 'manual installed aluminium conductors'}
 Length: ${length}m
 
 R1 (Line) = ${calculation.r1.toFixed(3)} Ω
@@ -56,18 +65,18 @@ Summary: For a ${length}m run of ${cableSize}/${cpcSize}mm² ${material} cable, 
 -------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, ['Both conductors use the selected material; recorded resistance at assumed 20 deg C; no armour model.'])}`);
   };
 
   const handleSaveHistory = async () => {
-    if (isSavingHistory) return;
+    if (isSavingHistory || !calculation.isValid) return;
     setIsSavingHistory(true);
     try {
       await saveCalculation(
         auth.currentUser?.uid,
         'cable_resistance',
         `Resistance: ${cableSize}/${cpcSize}mm² ${length}m`,
-        { cableSize, cpcSize, length, material },
+        { cableSize, cpcSize, length, material, cpcModel: material === 'copper' ? cpcModel : 'manual' },
         { r1: calculation.r1, r2: calculation.r2, totalR: calculation.totalR }
       );
       setTimeout(() => setIsSavingHistory(false), 2000);
@@ -78,12 +87,12 @@ Calculated via The Sparkys Mate
   };
 
   useEffect(() => {
-    if ((parseFloat(length) || 0) <= 0) return;
+    if (!calculation.isValid) return;
 
     const payload = {
       type: 'cable_resistance' as const,
       title: `Resistance: ${cableSize}/${cpcSize}mm² ${length}m`,
-      inputs: { cableSize, cpcSize, length, material },
+      inputs: { cableSize, cpcSize, length, material, cpcModel: material === 'copper' ? cpcModel : 'manual' },
       results: { r1: calculation.r1, r2: calculation.r2, totalR: calculation.totalR }
     };
     const signature = JSON.stringify(payload);
@@ -93,10 +102,12 @@ Calculated via The Sparkys Mate
     saveCalculation(auth.currentUser?.uid, payload.type, payload.title, payload.inputs, payload.results).catch(error => {
       console.error('Error auto-saving cable resistance history:', error);
     });
-  }, [calculation, cableSize, cpcSize, length, material]);
+  }, [calculation, cableSize, cpcSize, length, material, cpcModel]);
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} />
+      {!calculation.isValid && length && <p role="alert" className="text-xs text-red-400">Select recorded sizes for both {material} conductors and a positive length. No copper-to-aluminium scaling or missing-row substitution is applied.</p>}
       <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
         <div className="space-y-4">
           <div>
@@ -121,6 +132,7 @@ Calculated via The Sparkys Mate
             </div>
           </div>
 
+          {material === 'copper' && <InspectionCpcControl value={cpcModel} onChange={setCpcModel} />}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Line Size (mm²)</label>
@@ -129,7 +141,8 @@ Calculated via The Sparkys Mate
                 onChange={(e) => setCableSize(e.target.value)}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
               >
-                {Object.keys(CABLE_RESISTANCE).map(Number).sort((a, b) => a - b).map(size => (
+                {!cableSizes.includes(Number(cableSize)) && <option value={cableSize} disabled>{cableSize} mm2 - no recorded row</option>}
+                {cableSizes.map(size => (
                   <option key={size} value={size}>{size}mm²</option>
                 ))}
               </select>
@@ -138,10 +151,12 @@ Calculated via The Sparkys Mate
               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">CPC Size (mm²)</label>
               <select 
                 value={cpcSize}
+                disabled={material === 'copper' && cpcModel !== 'manual'}
                 onChange={(e) => setCpcSize(e.target.value)}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none"
               >
-                {Object.keys(CABLE_RESISTANCE).map(Number).sort((a, b) => a - b).map(size => (
+                {!cableSizes.includes(Number(cpcSize)) && <option value={cpcSize} disabled>{cpcSize || 'Unsupported pairing'} - no recorded row</option>}
+                {cableSizes.map(size => (
                   <option key={size} value={size}>{size}mm²</option>
                 ))}
               </select>
@@ -164,7 +179,8 @@ Calculated via The Sparkys Mate
         </div>
       </div>
 
-      {length && (
+      <RecalculateButton inputKey={JSON.stringify([cableSize,cpcSize,length,material,cpcModel])} message={calculation.isValid ? `Recalculated R1+R2: ${calculation.totalR.toFixed(3)} ohm. Resistance only; no fault-protection assessment.` : 'No result: select recorded conductor sizes and a positive length.'} />
+      {length && calculation.isValid && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
           <div className="bg-hardware-card p-6 rounded-3xl border border-hardware-border">
             <div className="flex items-center gap-2 mb-6">

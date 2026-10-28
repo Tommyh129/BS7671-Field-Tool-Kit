@@ -20,50 +20,14 @@ import { jsPDF } from 'jspdf';
 import { downloadFile } from '../utils/download';
 import { saveCalculation } from '../services/historyService';
 import { auth } from '../firebase';
+import { getResistanceSizes, formatSourceNotes } from '../data/electrical';
+import SourceNotes from './SourceNotes';
+import RecalculateButton from './RecalculateButton';
+import { dcCableDesign, type DcCableInputs } from '../utils/dcCable';
 
 interface DcVoltageDropCalculatorProps {
   onShare: (text: string) => void;
 }
-
-const COPPER_RESISTANCE: Record<number, number> = {
-  1.5: 12.1,
-  2.5: 7.41,
-  4: 4.61,
-  6: 3.08,
-  10: 1.83,
-  16: 1.15,
-  25: 0.727,
-  35: 0.524,
-  50: 0.387,
-  70: 0.268,
-  95: 0.193,
-  120: 0.153,
-  150: 0.124,
-  185: 0.0991,
-  240: 0.0754,
-  300: 0.0601
-};
-
-const ALUMINIUM_RESISTANCE: Record<number, number> = {
-  1.5: 20.0, // Extrapolated
-  2.5: 12.2, // Extrapolated
-  4: 7.41,
-  6: 4.61,
-  10: 3.08,
-  16: 1.91,
-  25: 1.20,
-  35: 0.868,
-  50: 0.641,
-  70: 0.443,
-  95: 0.320,
-  120: 0.253,
-  150: 0.206,
-  185: 0.164,
-  240: 0.125,
-  300: 0.100
-};
-
-const CABLE_SIZES = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300];
 
 export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalculatorProps) {
   // Input states
@@ -76,6 +40,14 @@ export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalcul
   const [maxDropType, setMaxDropType] = useState<string>('3'); // '3', '5', 'custom'
   const [customMaxDrop, setCustomMaxDrop] = useState<string>('3');
   const [autoSelect, setAutoSelect] = useState<boolean>(true);
+  const [loadMode, setLoadMode] = useState<'current' | 'power'>('current');
+  const [loadPower, setLoadPower] = useState('240');
+  const [resistanceModel, setResistanceModel] = useState<'table' | 'workbook'>('table');
+  const [temperature, setTemperature] = useState('20');
+  const [useCurrentDensity, setUseCurrentDensity] = useState(true);
+  const [currentDensity, setCurrentDensity] = useState('6');
+  const [deratingFactor, setDeratingFactor] = useState('1');
+  const [minimumSize, setMinimumSize] = useState(1);
 
   // Recommendation panel states
   const [recommendation, setRecommendation] = useState<{
@@ -101,43 +73,48 @@ export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalcul
   // Resolve Nominal Voltage
   const systemVoltage = useMemo(() => {
     if (voltageType === 'custom') {
-      return Math.max(0.1, parseFloat(customVoltage) || 12);
+      return Number(customVoltage);
     }
-    return parseFloat(voltageType) || 24;
+    return Number(voltageType);
   }, [voltageType, customVoltage]);
 
   // Resolve Max Permitted Percentage
   const maxDropPercent = useMemo(() => {
     if (maxDropType === 'custom') {
-      return Math.max(0.1, parseFloat(customMaxDrop) || 3);
+      return Number(customMaxDrop);
     }
-    return parseFloat(maxDropType) || 3;
+    return Number(maxDropType);
   }, [maxDropType, customMaxDrop]);
 
   // Resolve Resistance Value
-  const resistanceTable = material === 'copper' ? COPPER_RESISTANCE : ALUMINIUM_RESISTANCE;
+  const cableSizes = getResistanceSizes(material);
+  const sourceIds = ['dc-workbook', ...(resistanceModel === 'table' ? [`resistance-${material}`] : [])];
+  const designInputs: DcCableInputs = {
+    voltage:systemVoltage, loadMode, load:Number(loadMode==='power'?loadPower:loadCurrent), length:Number(cableLength),
+    material, resistanceModel, temperature:Number(temperature.trim() || 'NaN'), maxDropPercent,
+    currentDensity:useCurrentDensity?Number(currentDensity):null, deratingFactor:Number(deratingFactor), minimumSize,
+  };
+  const designKey = JSON.stringify(designInputs);
 
-  // Auto-selection of minimum compliant cable size
-  const suggestedCableSize = useMemo(() => {
-    const iVal = parseFloat(loadCurrent) || 0;
-    const lVal = parseFloat(cableLength) || 0;
-    if (iVal <= 0 || lVal <= 0 || systemVoltage <= 0) {
-      return null;
+  const calculation = useMemo(() => {
+    try {
+      return {...dcCableDesign(designInputs, cableSize, autoSelect), isValid:true, error:null};
+    } catch (error) {
+      return {isValid:false, error:error instanceof Error?error.message:'Invalid DC design inputs.',
+        current:0,cableSize,unitResistance:0,temperatureFactor:0,allowedDrop:0,voltageDrop:0,percentageDrop:0,finalVoltage:0,
+        minimumVoltageArea:null,minimumVoltageSize:null,minimumCurrentArea:null,requiredMinimumArea:null,densityCapacity:null,
+        suggestedSize:null,voltagePass:false,densityPass:false,isCompliant:false};
     }
-
-    for (const size of CABLE_SIZES) {
-      const res = resistanceTable[size];
-      if (!res) continue;
-
-      const drop = (2 * lVal * iVal * res) / 1000;
-      const pct = (drop / systemVoltage) * 100;
-
-      if (pct <= maxDropPercent) {
-        return size;
-      }
-    }
-    return null;
-  }, [loadCurrent, cableLength, systemVoltage, resistanceTable, maxDropPercent]);
+  }, [designKey, cableSize, autoSelect]);
+  const suggestedCableSize = calculation.suggestedSize;
+  const unitResistance = calculation.unitResistance;
+  const displayedCableSize = calculation.cableSize;
+  const assumptions = [
+    `One-way length; equal two-conductor DC loop; conductor temperature ${temperature} deg C; ${resistanceModel==='workbook'?'idealised copper rho20=0.0175 ohm mm2/m':'recorded 20 deg C resistance rows with temperature correction'}.`,
+    useCurrentDensity?`Preliminary current-density check: J=${currentDensity} A/mm2, K=${deratingFactor}; not a manufacturer/BS 7671 ampacity rating.`:'Current-carrying capacity not assessed.',
+    `Minimum available size ${minimumSize} mm2. User-selected voltage-drop target, not verified DC regulatory compliance.`,
+    'P/V uses power at supply voltage. Constant-power load regulation, source sag, joints, unequal returns, fault protection and installation ampacity require separate assessment.',
+  ];
 
   // Sync suggested size when autoSelect is true
   useEffect(() => {
@@ -146,89 +123,23 @@ export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalcul
     }
   }, [autoSelect, suggestedCableSize]);
 
-  const unitResistance = useMemo(() => {
-    return resistanceTable[cableSize] || 0;
-  }, [cableSize, resistanceTable]);
-
-  // Perform core calculation
-  const calculation = useMemo(() => {
-    const iVal = parseFloat(loadCurrent) || 0;
-    const lVal = parseFloat(cableLength) || 0;
-
-    // Validation flags
-    const isValid = iVal > 0 && lVal > 0 && systemVoltage > 0;
-
-    if (!isValid) {
-      return {
-        voltageDrop: 0,
-        percentageDrop: 0,
-        finalVoltage: systemVoltage,
-        isCompliant: true,
-        isValid: false,
-        error: 'Please enter valid positive values for load current, cable length, and system voltage.'
-      };
-    }
-
-    // Voltage Drop = (2 × L × I × R) / 1000
-    const voltageDrop = (2 * lVal * iVal * unitResistance) / 1000;
-    const percentageDrop = (voltageDrop / systemVoltage) * 100;
-    const finalVoltage = Math.max(0, systemVoltage - voltageDrop);
-    const isCompliant = percentageDrop <= maxDropPercent;
-
-    return {
-      voltageDrop,
-      percentageDrop,
-      finalVoltage,
-      isCompliant,
-      isValid: true,
-      error: null
-    };
-  }, [loadCurrent, cableLength, systemVoltage, unitResistance, maxDropPercent]);
+  useEffect(() => {
+    setRecommendation(null);
+    setShowRecommendation(false);
+  }, [designKey]);
 
   // Handler to find the smallest compliant cable size
   const handleCalculateMinimumSize = () => {
     setAutoSelect(true);
-    const iVal = parseFloat(loadCurrent) || 0;
-    const lVal = parseFloat(cableLength) || 0;
-
-    if (iVal <= 0 || lVal <= 0 || systemVoltage <= 0) {
-      setRecommendationError('Cannot recommend cable size. Please check that current, length, and voltage are valid.');
+    try {
+      const next = dcCableDesign(designInputs, cableSize, true);
+      if (next.suggestedSize===null) throw Error('No available size up to 400 mm2 meets every selected design check.');
+      setRecommendation({...next,resistance:next.unitResistance});
+      setCableSize(next.cableSize);
+      setRecommendationError(null);
+    } catch (error) {
       setRecommendation(null);
-      setShowRecommendation(true);
-      return;
-    }
-
-    setRecommendationError(null);
-    let foundSize: number | null = null;
-    let foundResult = null;
-
-    // Iterate smallest to largest
-    for (const size of CABLE_SIZES) {
-      const res = resistanceTable[size];
-      if (!res) continue;
-
-      const drop = (2 * lVal * iVal * res) / 1000;
-      const pct = (drop / systemVoltage) * 100;
-
-      if (pct <= maxDropPercent) {
-        foundSize = size;
-        foundResult = {
-          cableSize: size,
-          voltageDrop: drop,
-          percentageDrop: pct,
-          finalVoltage: Math.max(0, systemVoltage - drop),
-          resistance: res
-        };
-        break;
-      }
-    }
-
-    if (foundResult && foundSize) {
-      setRecommendation(foundResult);
-      setCableSize(foundSize);
-    } else {
-      setRecommendation(null);
-      setRecommendationError(`No cable size in our standard database (up to 300 mm²) satisfies the ${maxDropPercent}% maximum voltage drop limit. Consider raising the system voltage or reducing the cable length.`);
+      setRecommendationError(error instanceof Error?error.message:'Check the DC design inputs.');
     }
     setShowRecommendation(true);
   };
@@ -239,14 +150,15 @@ export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalcul
 
     const payload = {
       type: 'dc_voltage_drop' as const,
-      title: `DC Drop: ${calculation.percentageDrop.toFixed(2)}% (${cableSize}mm²)`,
+      title: `DC Drop: ${calculation.percentageDrop.toFixed(2)}% (${displayedCableSize}mm²)`,
       inputs: {
         voltageType,
         customVoltage,
-        loadCurrent,
+        loadCurrent:String(calculation.current),
+        loadMode, loadPower, resistanceModel, temperature, useCurrentDensity, currentDensity, deratingFactor, minimumSize,
         cableLength,
         material,
-        cableSize,
+        cableSize:displayedCableSize,
         maxDropType,
         customMaxDrop,
         systemVoltage,
@@ -257,7 +169,11 @@ export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalcul
         percentageDrop: calculation.percentageDrop,
         finalVoltage: calculation.finalVoltage,
         isCompliant: calculation.isCompliant,
-        unitResistance
+        unitResistance,
+        current:calculation.current, minimumVoltageArea:calculation.minimumVoltageArea, minimumVoltageSize:calculation.minimumVoltageSize,
+        minimumCurrentArea:calculation.minimumCurrentArea, requiredMinimumArea:calculation.requiredMinimumArea,
+        densityCapacity:calculation.densityCapacity, voltagePass:calculation.voltagePass, densityPass:calculation.densityPass,
+        calculationVersion:'dc-workbook-v1', assumptions,
       }
     };
 
@@ -274,18 +190,19 @@ export default function DcVoltageDropCalculator({ onShare }: DcVoltageDropCalcul
     ).catch(error => {
       console.error('Error auto-saving DC voltage drop history:', error);
     });
-  }, [calculation, cableSize, material, voltageType, customVoltage, loadCurrent, cableLength, maxDropType, customMaxDrop]);
+  }, [calculation, designKey, voltageType, customVoltage, maxDropType, customMaxDrop]);
 
   // Share calculation summary text
   const handleShare = () => {
+    if (!calculation.isValid) return;
     const text = `
 ⚡ DC VOLTAGE DROP & CABLE SIZING REPORT ⚡
 -----------------------------------------
 System Nominal Voltage: ${systemVoltage} V DC
-Load Current: ${loadCurrent} A
+Load Current: ${calculation.current.toFixed(4)} A${loadMode==='power'?` (from ${loadPower} W at supply voltage)`:''}
 One-way Cable Length: ${cableLength} m
 Conductor Material: ${material.toUpperCase()}
-Selected Cable Size: ${cableSize} mm²
+Selected Cable Size: ${displayedCableSize} mm²
 Max Permitted Drop: ${maxDropPercent} %
 
 Calculated Outputs:
@@ -293,18 +210,20 @@ Calculated Outputs:
 - Calculated Voltage Drop: ${calculation.voltageDrop.toFixed(2)} V
 - Percentage Voltage Drop: ${calculation.percentageDrop.toFixed(2)} %
 - Final Voltage at Load: ${calculation.finalVoltage.toFixed(2)} V
-- Limit Compliance: ${calculation.isCompliant ? 'PASS ✅' : 'FAIL ❌'}
+- Selected design checks: ${calculation.isCompliant ? 'MET' : 'NOT MET'} (not BS 7671 certification)
+- Minimum area from current density: ${calculation.minimumCurrentArea?.toFixed(4) ?? 'Not assessed'} mm2
+- Minimum available size for voltage drop: ${calculation.minimumVoltageSize ?? 'None'} mm2
 
 ${recommendation ? `
 Optimal Cable Recommendation:
-- Smallest Compliant Size: ${recommendation.cableSize} mm²
+- Smallest Size Meeting Selected Checks: ${recommendation.cableSize} mm²
 - Recommended Drop: ${recommendation.voltageDrop.toFixed(2)} V (${recommendation.percentageDrop.toFixed(2)}%)
 - Recommended Load Voltage: ${recommendation.finalVoltage.toFixed(2)} V
 ` : ''}
 -----------------------------------------
 Calculated via The Sparkys Mate
     `.trim();
-    onShare(text);
+    onShare(`${text}\n\n${formatSourceNotes(sourceIds, assumptions)}`);
   };
 
   // Download high-res PNG image
@@ -334,13 +253,14 @@ Calculated via The Sparkys Mate
         backgroundColor: '#ffffff',
       });
 
+      const reportHeight = Math.max(600, 400 * pdfRef.current.scrollHeight / pdfRef.current.offsetWidth);
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'px',
-        format: [400, 600]
+        format: [400, reportHeight]
       });
 
-      pdf.addImage(dataUrl, 'PNG', 0, 0, 400, 600);
+      pdf.addImage(dataUrl, 'PNG', 0, 0, 400, reportHeight);
       const pdfDataUrl = pdf.output('datauristring');
 
       await downloadFile(pdfDataUrl, `dc-volt-drop-report-${Date.now()}.pdf`, 'application/pdf');
@@ -353,12 +273,14 @@ Calculated via The Sparkys Mate
 
   return (
     <div className="space-y-6">
+      <SourceNotes ids={sourceIds} assumptions={assumptions} />
+      <RecalculateButton inputKey={JSON.stringify([designKey,cableSize,autoSelect])} onRecalculate={handleCalculateMinimumSize} message={calculation.isValid ? suggestedCableSize!==null ? 'Recalculated using the voltage-drop target and any enabled current-density check. Installation ampacity and protection still require verification.' : 'No available size meets every selected design check.' : 'No valid DC result for these inputs.'} />
       <div className="bg-hardware-card rounded-3xl border border-hardware-border p-5 sm:p-6 space-y-6">
 
         {/* Toggle Material */}
         <div className="flex bg-black/40 p-1 rounded-2xl border border-hardware-border">
           <button
-            onClick={() => setMaterial('copper')}
+            onClick={() => {if(material!=='copper')setCurrentDensity('6');setMaterial('copper');}}
             className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
               material === 'copper' ? 'bg-emerald-500 text-black shadow-lg font-black' : 'text-gray-500 hover:text-gray-300'
             }`}
@@ -366,7 +288,7 @@ Calculated via The Sparkys Mate
             Copper (Cu)
           </button>
           <button
-            onClick={() => setMaterial('aluminium')}
+            onClick={() => {setMaterial('aluminium');setResistanceModel('table');setCurrentDensity('');setUseCurrentDensity(false);}}
             className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
               material === 'aluminium' ? 'bg-emerald-500 text-black shadow-lg font-black' : 'text-gray-500 hover:text-gray-300'
             }`}
@@ -416,14 +338,19 @@ Calculated via The Sparkys Mate
             </motion.div>
           )}
 
+          <div className="md:col-span-2 flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="dc-load-mode" checked={loadMode==='current'} onChange={()=>setLoadMode('current')}/>Current input (A)</label>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="dc-load-mode" checked={loadMode==='power'} onChange={()=>setLoadMode('power')}/>Power at supply voltage (W)</label>
+          </div>
           {/* Load Current (Ib) */}
           <div>
-            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Load Current (Amps)</label>
+            <label htmlFor="dc-load" className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">{loadMode==='power'?'Load Power (Watts at supply voltage)':'Load Current (Amps)'}</label>
             <input
+              id="dc-load"
               type="number"
               inputMode="decimal"
-              value={loadCurrent}
-              onChange={(e) => setLoadCurrent(e.target.value)}
+              value={loadMode==='power'?loadPower:loadCurrent}
+              onChange={(e) => loadMode==='power'?setLoadPower(e.target.value):setLoadCurrent(e.target.value)}
               placeholder="10"
               className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-mono font-bold focus:border-emerald-500/50 transition-colors outline-none"
             />
@@ -463,7 +390,7 @@ Calculated via The Sparkys Mate
             </div>
             <div className="relative">
               <select
-                value={cableSize}
+                value={displayedCableSize}
                 onChange={(e) => {
                   setCableSize(parseFloat(e.target.value));
                   setAutoSelect(false);
@@ -472,9 +399,10 @@ Calculated via The Sparkys Mate
                   autoSelect ? 'border-emerald-500/30 text-emerald-400' : 'border-hardware-border'
                 }`}
               >
-                {CABLE_SIZES.map(size => (
+                {!cableSizes.includes(cableSize) && <option value={cableSize} disabled>{cableSize} mm2 - no recorded {material} row</option>}
+                {cableSizes.filter(size=>size<=400).map(size => (
                   <option key={size} value={size} className="bg-hardware-card text-white font-mono">
-                    {size} mm² ({resistanceTable[size]} mΩ/m)
+                    {size} mm²
                   </option>
                 ))}
               </select>
@@ -491,8 +419,8 @@ Calculated via The Sparkys Mate
                 onChange={(e) => setMaxDropType(e.target.value)}
                 className="w-full bg-black/40 border border-hardware-border rounded-2xl px-4 py-4 text-white font-bold appearance-none focus:border-emerald-500/50 transition-colors outline-none cursor-pointer"
               >
-                <option value="3" className="bg-hardware-card text-white">3% (Lighting standards)</option>
-                <option value="5" className="bg-hardware-card text-white">5% (Power & General)</option>
+                <option value="3" className="bg-hardware-card text-white">3% design target</option>
+                <option value="5" className="bg-hardware-card text-white">5% design target</option>
                 <option value="10" className="bg-hardware-card text-white">10% (High tolerance DC)</option>
                 <option value="custom" className="bg-hardware-card text-white">Custom Percentage...</option>
               </select>
@@ -519,6 +447,41 @@ Calculated via The Sparkys Mate
             </motion.div>
           )}
 
+        </div>
+
+        <div className="border-t border-hardware-border pt-5 space-y-4">
+          <h3 className="text-sm font-bold">DC Design Assumptions</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0">
+            <div className="min-w-0">
+              <label htmlFor="dc-resistance-model" className="block text-xs text-gray-400 mb-2">Resistance basis</label>
+              <select id="dc-resistance-model" value={resistanceModel} onChange={e=>setResistanceModel(e.target.value as 'table'|'workbook')} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-lg p-3 text-sm">
+                <option value="table">Recorded resistance at 20 C</option>
+                {material==='copper' && <option value="workbook">Workbook copper resistivity (0.0175)</option>}
+              </select>
+            </div>
+            <div className="min-w-0">
+              <label htmlFor="dc-minimum-size" className="block text-xs text-gray-400 mb-2">Minimum available cable size (mm²)</label>
+              <select id="dc-minimum-size" value={minimumSize} onChange={e=>setMinimumSize(Number(e.target.value))} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-lg p-3 text-sm">
+                {[1,1.5,2.5,4,6,10,16,25,35,50,70,95,120,150,185,240,300,400].map(size=><option value={size} key={size}>{size} mm²</option>)}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="dc-temperature" className="block text-xs text-gray-400 mb-2">Conductor temperature (°C)</label>
+              <input id="dc-temperature" type="number" inputMode="decimal" min={-20} max={90} value={temperature} onChange={e=>setTemperature(e.target.value)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-lg p-3 text-sm"/>
+            </div>
+          </div>
+          <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={useCurrentDensity} onChange={e=>setUseCurrentDensity(e.target.checked)}/>Include preliminary current-density sizing</label>
+          {useCurrentDensity && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="dc-current-density" className="block text-xs text-gray-400 mb-2">Design current density J (A/mm²)</label>
+              <input id="dc-current-density" type="number" inputMode="decimal" min="0" step="any" value={currentDensity} onChange={e=>setCurrentDensity(e.target.value)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-lg p-3 text-sm"/>
+            </div>
+            <div>
+              <label htmlFor="dc-derating" className="block text-xs text-gray-400 mb-2">Combined derating factor K (0 &lt; K ≤ 1)</label>
+              <input id="dc-derating" type="number" inputMode="decimal" min="0" max="1" step="any" value={deratingFactor} onChange={e=>setDeratingFactor(e.target.value)} className="w-full min-w-0 bg-black/40 border border-hardware-border rounded-lg p-3 text-sm"/>
+            </div>
+          </div>}
+          <p className="text-xs text-amber-300 leading-relaxed">Preliminary sizing only. J = 6 A/mm² is the workbook's copper assumption, not a cable rating. Verify the selected cable's installation ampacity, DC protection, insulation and termination temperature limits. Power input uses P/V at supply voltage, not a regulated constant-power load model.</p>
         </div>
 
         {/* Core Sizing Action Button */}
@@ -581,13 +544,14 @@ Calculated via The Sparkys Mate
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="p-3.5 bg-black/30 rounded-2xl border border-hardware-border/30">
-                      <p className="text-gray-500 text-[9px] font-bold uppercase tracking-widest">Smallest Safe Cable Size</p>
+                      <p className="text-gray-500 text-[9px] font-bold uppercase tracking-widest">Smallest Size Meeting Design Checks</p>
                       <p className="text-2xl font-mono font-black text-white mt-1">
                         {recommendation.cableSize} <span className="text-xs font-sans font-normal text-gray-400">mm²</span>
                       </p>
                       <button
                         onClick={() => {
                           setCableSize(recommendation.cableSize);
+                          setAutoSelect(true);
                           setShowRecommendation(false);
                         }}
                         className="text-[9px] font-black uppercase text-emerald-500 hover:text-emerald-400 mt-2 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20 transition-colors inline-block"
@@ -605,7 +569,7 @@ Calculated via The Sparkys Mate
                       <div className="p-3 bg-black/30 rounded-2xl border border-hardware-border/30">
                         <p className="text-gray-500 text-[8px] font-bold uppercase tracking-widest">Voltage at Load</p>
                         <p className="text-base font-mono font-bold text-white mt-0.5">{recommendation.finalVoltage.toFixed(2)} V</p>
-                        <p className="text-[8px] text-gray-500 font-mono">cos φ = 1.0 (DC)</p>
+                        <p className="text-[8px] text-gray-500 font-mono">Two-conductor DC loop</p>
                       </div>
                     </div>
                   </div>
@@ -625,13 +589,14 @@ Calculated via The Sparkys Mate
         >
           {/* Main Printable Results Panel */}
           <div ref={shareRef} className="bg-hardware-card rounded-3xl border border-hardware-border p-5 sm:p-6 space-y-6 relative overflow-hidden">
+            <SourceNotes ids={sourceIds} expanded assumptions={assumptions} />
             <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-mono text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-1">Voltage Drop Results</h3>
                 <h4 className="text-lg font-bold text-white flex items-center gap-2">
-                  <span>{cableSize} mm² {material === 'copper' ? 'Copper' : 'Aluminium'} Conductor</span>
+                  <span>{displayedCableSize} mm² {material === 'copper' ? 'Copper' : 'Aluminium'} Conductor</span>
                 </h4>
               </div>
               <button
@@ -663,6 +628,15 @@ Calculated via The Sparkys Mate
             </div>
 
             {/* Sizing Warning */}
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-hardware-border pt-4 text-sm">
+              <div><dt className="text-xs text-gray-400">Design current</dt><dd className="font-mono mt-1">{calculation.current.toFixed(4)} A{loadMode==='power'?` (${loadPower} W / ${systemVoltage} V)`:''}</dd></div>
+              <div><dt className="text-xs text-gray-400">Conductor resistance at {temperature} °C</dt><dd className="font-mono mt-1">{unitResistance.toFixed(5)} mΩ/m</dd></div>
+              <div><dt className="text-xs text-gray-400">Minimum available size for voltage drop</dt><dd className="font-mono mt-1">{calculation.minimumVoltageSize!==null?`${calculation.minimumVoltageSize} mm²`:'None up to 400 mm²'}</dd></div>
+              <div><dt className="text-xs text-gray-400">Minimum area from current density</dt><dd className="font-mono mt-1">{calculation.minimumCurrentArea!==null?`${calculation.minimumCurrentArea.toFixed(4)} mm²`:'Not assessed'}</dd></div>
+              {calculation.minimumVoltageArea!==null && <div><dt className="text-xs text-gray-400">Workbook voltage-drop area</dt><dd className="font-mono mt-1">{calculation.minimumVoltageArea.toFixed(4)} mm²</dd></div>}
+              {calculation.requiredMinimumArea!==null && <div><dt className="text-xs text-gray-400">Combined minimum before size rounding</dt><dd className="font-mono mt-1">{calculation.requiredMinimumArea.toFixed(4)} mm²</dd></div>}
+              {calculation.densityCapacity!==null && <div><dt className="text-xs text-gray-400">Current-density allowance (not rated ampacity)</dt><dd className="font-mono mt-1">{calculation.densityCapacity.toFixed(2)} A</dd></div>}
+            </dl>
             {suggestedCableSize === null && (
               <div className="p-4 rounded-2xl border bg-red-500/10 border-red-500/20 text-red-400 flex gap-3.5">
                 <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={18} />
@@ -671,7 +645,7 @@ Calculated via The Sparkys Mate
                     Sizing Alert: Limit Exceeded
                   </span>
                   <p className="text-xs text-gray-300 leading-relaxed font-sans">
-                    No standard cable size in our database (up to 300 mm²) can satisfy the {maxDropPercent}% voltage drop limit with the current inputs. Consider raising the system voltage or reducing the cable run length.
+                    No available {material} size up to 400 mm² meets every selected design check. No larger size is invented.
                   </p>
                 </div>
               </div>
@@ -691,16 +665,16 @@ Calculated via The Sparkys Mate
                   <span className={`text-[10px] font-black uppercase tracking-wider ${
                     calculation.isCompliant ? 'text-emerald-500' : 'text-red-500'
                   }`}>
-                    {calculation.isCompliant ? 'Compliance: Pass' : 'Compliance: Fail'}
+                    {calculation.isCompliant ? 'Selected Checks Met' : 'Selected Checks Not Met'}
                   </span>
                   <span className="text-[9px] text-gray-500 font-bold font-mono">
                     Limit: {maxDropPercent}% ({((maxDropPercent / 100) * systemVoltage).toFixed(2)} V)
                   </span>
                 </div>
                 <p className="text-xs text-gray-300 leading-relaxed font-sans">
-                  {calculation.isCompliant
-                    ? `The calculated voltage drop of ${calculation.voltageDrop.toFixed(2)}V (${calculation.percentageDrop.toFixed(2)}%) is compliant with the selected maximum permitted limit of ${maxDropPercent}%.`
-                    : `The calculated voltage drop of ${calculation.voltageDrop.toFixed(2)}V (${calculation.percentageDrop.toFixed(2)}%) exceeds the selected maximum permitted limit of ${maxDropPercent}%.`}
+                  Voltage-drop target: {calculation.voltagePass?'met':'not met'}. {useCurrentDensity?`Current-density assumption: ${calculation.densityPass?'met':'not met'}.`:'Current capacity not assessed.'} This is not a BS 7671 compliance assessment.
+                  {displayedCableSize<minimumSize && ' Selected cable is below the minimum available size.'}
+                  {calculation.finalVoltage<=0 && ' The assumed current would exhaust the supply voltage. The actual load cannot operate as modelled.'}
                 </p>
               </div>
             </div>
@@ -722,7 +696,7 @@ Calculated via The Sparkys Mate
               <div className="grid grid-cols-2 gap-4 text-[9px] text-gray-500 font-mono leading-normal pt-1">
                 <div>
                   <p>• L (One-way) = {cableLength} m</p>
-                  <p>• I (Current) = {loadCurrent} A</p>
+                  <p>• I (Current) = {calculation.current.toFixed(4)} A</p>
                 </div>
                 <div>
                   <p>• R (Resistance) = {unitResistance} mΩ/m</p>
@@ -805,10 +779,11 @@ Calculated via The Sparkys Mate
           </AnimatePresence>
 
           {/* Hidden Print quality Sheet for rendering PDF */}
-          <div className="hidden">
-            <div ref={pdfRef} style={{ width: '400px', height: '600px', padding: '40px', backgroundColor: '#ffffff', color: '#151619' }} className="space-y-8 font-sans">
+          <div aria-hidden="true" className="fixed -left-[10000px] top-0 pointer-events-none">
+            <div ref={pdfRef} style={{ width: '400px', minHeight: '600px', padding: '40px', backgroundColor: '#ffffff', color: '#151619' }} className="space-y-8 font-sans">
+              <SourceNotes ids={sourceIds} expanded assumptions={assumptions} />
               <div className="border-b-2 border-emerald-500 pb-4">
-                <h1 className="text-2xl font-black tracking-tight uppercase">BS 7671 Field Report</h1>
+                <h1 className="text-2xl font-black tracking-tight uppercase">DC Cable Design Estimate</h1>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 mt-1 font-mono">DC Voltage Drop Calculation</p>
               </div>
               <div className="space-y-4">
@@ -819,13 +794,13 @@ Calculated via The Sparkys Mate
                   </div>
                   <div>
                     <p className="text-gray-400 text-[8px] font-bold uppercase tracking-wider">Load Current</p>
-                    <p className="text-xs font-bold font-mono text-black mt-0.5">{loadCurrent} A</p>
+                    <p className="text-xs font-bold font-mono text-black mt-0.5">{calculation.current.toFixed(4)} A{loadMode==='power'?` (${loadPower} W at supply voltage)`:''}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-gray-400 text-[8px] font-bold uppercase tracking-wider">Cable Specifications</p>
-                    <p className="text-xs font-bold text-black mt-0.5 font-mono">{cableSize} mm² ({material.toUpperCase()})</p>
+                    <p className="text-xs font-bold text-black mt-0.5 font-mono">{displayedCableSize} mm² ({material.toUpperCase()})</p>
                   </div>
                   <div>
                     <p className="text-gray-400 text-[8px] font-bold uppercase tracking-wider">One-way Cable Length</p>
@@ -855,8 +830,9 @@ Calculated via The Sparkys Mate
                 </p>
                 <div className="grid grid-cols-2 gap-4 mt-2">
                   <p className="text-[8px] text-gray-500 font-mono">Max Permitted Limit: {maxDropPercent}%</p>
-                  <p className="text-[8px] text-gray-500 font-mono">Status: {calculation.isCompliant ? 'PASS' : 'FAIL'}</p>
+                  <p className="text-[8px] text-gray-500 font-mono">Selected checks: {calculation.isCompliant ? 'MET' : 'NOT MET'}; not compliance certification</p>
                 </div>
+                <p className="text-[10px] text-gray-700">Voltage-drop minimum available size: {calculation.minimumVoltageSize??'None'} mm². Current-density minimum area: {calculation.minimumCurrentArea?.toFixed(4)??'Not assessed'} mm². Combined unrounded area: {calculation.requiredMinimumArea?.toFixed(4)??'Use discrete resistance rows'}.</p>
               </div>
 
               <div className="border-t pt-4 text-[7px] text-gray-400 font-mono text-center">

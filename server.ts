@@ -7,9 +7,16 @@ import path from "path";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
-import type { CollectionReference } from "firebase-admin/firestore";
+import { installPrivacyRoutes } from './server/privacy';
+import { installRamsRoutes } from './server/rams';
+import { installBusinessStorageRoutes } from './server/business-storage';
 import { GoogleGenAI } from "@google/genai";
 import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
+import { installInvoiceRoutes } from './server/invoices';
+import { installSubscriptionRoutes } from './server/subscriptions';
+import { hasInvoicedBusinessAccess } from './src/subscriptions';
+import { stripeSubscriptions, syncStripeSubscription } from './server/stripe-plans';
+import { installWebBillingRoutes } from './server/web-billing';
 
 dotenv.config();
 
@@ -50,22 +57,6 @@ const DEFAULT_REGULATORY_UPDATE: RegulatoryUpdate = {
 
 let regulatoryCache: { value: RegulatoryUpdate; expiresAt: number } | null = null;
 
-async function deleteCollectionInBatches(
-  collectionRef: CollectionReference,
-  batchSize = 400
-) {
-  while (true) {
-    const snapshot = await collectionRef.limit(batchSize).get();
-    if (snapshot.empty) return;
-
-    const batch = db.batch();
-    snapshot.docs.forEach(document => batch.delete(document.ref));
-    await batch.commit();
-
-    if (snapshot.size < batchSize) return;
-  }
-}
-
 function normalizeRegulatoryUpdate(data: Partial<RegulatoryUpdate>): RegulatoryUpdate {
   return {
     version: data.version || DEFAULT_REGULATORY_UPDATE.version,
@@ -100,7 +91,7 @@ async function fetchRegulatoryUpdate(): Promise<RegulatoryUpdate> {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
   // Stripe Webhook (must be before express.json())
   app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), async (req, res) => {
@@ -120,58 +111,58 @@ async function startServer() {
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    // Handle the event
-    switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const userId = session.client_reference_id;
-        
-        if (userId) {
-          try {
-            await db.collection("users").doc(userId).update({
-              isPro: true,
-              subscriptionId: session.subscription as string || null,
-              updatedAt: new Date().toISOString()
-            });
-            console.log(`Successfully upgraded user ${userId} to Pro`);
-          } catch (error) {
-            console.error(`Error updating user ${userId}:`, error);
-          }
-        }
-        break;
-      }
-      case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription;
-        // We need to find the user by subscriptionId
-        try {
-          const userSnapshot = await db.collection("users").where("subscriptionId", "==", subscription.id).limit(1).get();
-          if (!userSnapshot.empty) {
-            const userDoc = userSnapshot.docs[0];
-            await userDoc.ref.update({
-              isPro: false,
-              subscriptionId: null,
-              updatedAt: new Date().toISOString()
-            });
-            console.log(`Successfully revoked Pro for user ${userDoc.id} due to subscription deletion`);
-          }
-        } catch (error) {
-          console.error(`Error revoking Pro for subscription ${subscription.id}:`, error);
-        }
-        break;
-      }
-      default:
-        console.log(`Unhandled event type ${event.type}`);
+    const object=event.data.object as unknown as {subscription?:string;id:string;client_reference_id?:string};
+    if(['checkout.session.completed','customer.subscription.created','customer.subscription.updated','customer.subscription.deleted'].includes(event.type)){
+      const subscriptionId=event.type==='checkout.session.completed'?object.subscription:object.id;
+      try{if(subscriptionId)await syncStripeSubscription(stripe,subscriptionId,object.client_reference_id);}
+      catch{return res.status(503).send('Subscription update could not be saved. Retry webhook.');}
     }
 
     res.json({ received: true });
   });
 
-  app.use(express.json());
   app.use(cors());
+  installRamsRoutes(app, firebaseConfig.storageBucket, firebaseConfig.firestoreDatabaseId);
+  app.use(express.json({ limit: '1mb' }));
+  installPrivacyRoutes(app, firebaseConfig.firestoreDatabaseId, firebaseConfig.storageBucket);
+  installBusinessStorageRoutes(app, firebaseConfig.storageBucket, firebaseConfig.firestoreDatabaseId);
+  installInvoiceRoutes(app, firebaseConfig.storageBucket);
+  installSubscriptionRoutes(app);
 
   // API Routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.get('/api/subscriptions/context',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const bearer=req.header('authorization')?.match(/^Bearer (.+)$/)?.[1];
+    if(!bearer)return res.status(401).json({error:'Sign in to check your subscription.'});
+    let uid:string;
+    try{uid=(await getAuth().verifyIdToken(bearer,true)).uid;}catch{return res.status(401).json({error:'Sign in again to check your subscription.'});}
+    try{
+      const profile=(await db.doc(`users/${uid}`).get()).data()||{};
+      if(!stripe&&(profile.stripeSubscriptionId||profile.subscriptionId||profile.businessStripeSubscriptionId))throw Error('The web billing provider is unavailable. Do not start a separate store subscription.');
+      const web=stripe?(await stripeSubscriptions(stripe,uid,profile))[0]:null;
+      // An old expiry alone does not prove that a native auto-renewal stopped.
+      // Keep changes on the original store until that source is reconciled.
+      const invoiced = profile.invoicedBusiness;
+      res.json({webActive:Boolean(web),invoicedBusiness:hasInvoicedBusinessAccess(profile) || (invoiced?.revoked === false && invoiced.expiresAt > Date.now()),native:profile.nativeSubscription?{provider:profile.nativeSubscription.provider,tier:profile.nativeSubscription.tier}:null,unknownLegacyPro:(profile.isPro===true||profile.businessUntil>0)&&!web&&!profile.nativeSubscription&&!profile.isBusiness});
+    }catch(error){res.status(409).json({error:error instanceof Error?error.message:'Subscription checks are unavailable. Restore before paying again.'});}
+  });
+
+  app.post('/api/subscriptions/restore',async(req,res)=>{
+    const bearer=req.header('authorization')?.match(/^Bearer (.+)$/)?.[1];
+    if(!bearer)return res.status(401).json({error:'Sign in to restore your web subscription.'});
+    let uid:string;
+    try{uid=(await getAuth().verifyIdToken(bearer,true)).uid;}catch{return res.status(401).json({error:'Sign in again to restore your subscription.'});}
+    if(!stripe)return res.status(503).json({error:'Web billing is unavailable. No payment has been started.'});
+    try{
+      const profile=(await db.doc(`users/${uid}`).get()).data()||{};
+      const active=await stripeSubscriptions(stripe,uid,profile);
+      for(const id of new Set([profile.stripeSubscriptionId,profile.subscriptionId,profile.businessStripeSubscriptionId,...active.map(s=>s.id)].filter(Boolean)))await syncStripeSubscription(stripe,id);
+      res.json({restored:active.length>0});
+    }catch{return res.status(503).json({error:'The existing subscription could not be restored. Contact support; do not purchase another plan.'});}
   });
 
   app.get("/api/regulatory-updates", async (req, res) => {
@@ -199,90 +190,17 @@ async function startServer() {
     }
   });
 
-  app.post("/api/create-checkout-session", async (req, res) => {
-    if (!stripe) {
-      return res.status(500).json({ error: "Stripe not configured" });
-    }
-
-    try {
-      const { userId, email } = req.body;
-      const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || "http://localhost:3000";
-
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        line_items: [
-          {
-            price_data: {
-              currency: "gbp",
-              product_data: {
-                name: "The Sparkys Mate Pro Subscription",
-                description: "Unlock all advanced electrical design tools (1 Month Free Trial)",
-              },
-              unit_amount: 599, // £5.99
-              recurring: {
-                interval: "month",
-              },
-            },
-            quantity: 1,
-          },
-        ],
-        mode: "subscription",
-        subscription_data: {
-          trial_period_days: 30,
-        },
-        success_url: `${appUrl}?success=true`,
-        cancel_url: `${appUrl}?canceled=true`,
-        customer_email: email,
-        client_reference_id: userId,
-      });
-
-      res.json({ url: session.url });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Account Deletion
-  app.post("/api/delete-account", async (req, res) => {
-    const authorization = req.header("authorization");
-    const bearerToken = authorization?.startsWith("Bearer ")
-      ? authorization.slice("Bearer ".length).trim()
-      : undefined;
-    const idToken = bearerToken || req.body?.idToken;
-
-    if (!idToken) {
-      return res.status(400).json({ error: "Missing ID token" });
-    }
-
-    try {
-      const decodedToken = await getAuth().verifyIdToken(idToken);
-      const uid = decodedToken.uid;
-
-      console.log(`Deleting account for user: ${uid}`);
-
-      const userRef = db.collection("users").doc(uid);
-
-      // Delete user-owned data before removing the authentication record.
-      await deleteCollectionInBatches(userRef.collection("history"));
-      await userRef.delete();
-
-      await getAuth().deleteUser(uid);
-
-      res.json({ success: true });
-    } catch (error: any) {
-      console.error("Error deleting account:", error);
-      const status = error?.code?.startsWith("auth/") ? 401 : 500;
-      res.status(status).json({
-        error: status === 401
-          ? "The sign-in session could not be verified."
-          : "The account could not be deleted."
-      });
-    }
+  installWebBillingRoutes(app, {
+    stripe,
+    verify: token => getAuth().verifyIdToken(token, true),
+    profile: async uid => (await db.doc(`users/${uid}`).get()).data() || {},
+    returnUrl: process.env.APP_URL || process.env.VITE_APP_URL || 'https://the-sparkys-mate-29962838005.europe-west1.run.app',
   });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
+      configLoader: "runner",
       server: { middlewareMode: true },
       appType: "spa",
     });
