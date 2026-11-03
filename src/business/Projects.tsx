@@ -1320,6 +1320,7 @@ export function ProjectsWorkspace({
             <FolderOpen size={24} />
           )}
           <h1>{project ? `Project ${project.payload.number}` : "Projects"}</h1>
+          <div className="business-header-actions">
           <Action title="Business Profile" onClick={() => setSettings(true)}>
             <Settings size={22} />
           </Action>
@@ -1330,6 +1331,7 @@ export function ProjectsWorkspace({
               New project
             </button>
           )}
+          </div>
         </header>
         {error && <p role="alert">{error}</p>}
         {notice && <p role="status">{notice}</p>}
@@ -1436,10 +1438,10 @@ export function ProjectsWorkspace({
                     key={p.id}
                     onClick={() => setProjectId(p.id)}
                   >
-                    <strong>
+                    <strong data-single-line-title>
                       Project {p.payload.number} - {p.payload.customer}
                     </strong>
-                    <span>{p.payload.title}</span>
+                    <span data-single-line-title>{p.payload.title}</span>
                     <small>
                       {p.payload.status} | Updated{" "}
                       {M.ukDate(

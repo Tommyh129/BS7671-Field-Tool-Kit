@@ -56,8 +56,8 @@ export default function HomeSummary({ uid, business, pro, openProject, openTool,
           <div className="divide-y divide-white/10">{projects.map(row => <button key={row.id} onClick={() => openProject(row.id)}
             className="w-full text-left py-4 flex items-start gap-3 min-w-0 hover:bg-white/5">
             <FolderOpen size={20} className="text-emerald-400 shrink-0 mt-1"/>
-            <span className="min-w-0 flex-1 break-words"><span className="block font-bold">Project {row.payload.number} - {row.payload.customer}</span>
-              <span className="block text-sm text-gray-400">{row.payload.title}</span>
+            <span className="min-w-0 flex-1 break-words"><span data-single-line-title className="block font-bold">Project {row.payload.number} - {row.payload.customer}</span>
+              <span data-single-line-title className="block text-sm text-gray-400">{row.payload.title}</span>
               <span className="block text-sm text-emerald-400 mt-1">{ukDate(row.payload.startDate!)}{row.payload.startDate! < today() ? ' - Overdue start' : ''}</span>
               {row.sync !== 'synced' && <span className="block text-xs text-amber-400">Unsynced</span>}
             </span><ChevronRight size={18} className="shrink-0 text-gray-500"/>
@@ -68,7 +68,7 @@ export default function HomeSummary({ uid, business, pro, openProject, openTool,
       <h3 className="font-bold text-white mb-3">Most Used Tools</h3>
       <div className="grid grid-cols-2 gap-3">{frequentTools(usage, pro).map(mode => <button key={mode} onClick={() => openTool(mode)}
         className="min-w-0 text-left bg-hardware-card border border-hardware-border rounded-lg p-4 flex items-start gap-3 hover:border-emerald-500/40">
-        <Calculator size={20} className="text-emerald-400 shrink-0"/><span className="text-sm font-bold break-words min-w-0">{TOOL_LABELS[mode]}</span>
+        <Calculator size={20} className="text-emerald-400 shrink-0"/><span data-single-line-title className="text-sm font-bold min-w-0 flex-1">{TOOL_LABELS[mode]}</span>
       </button>)}</div>
     </section>
     {!business && <section aria-label="Upgrade to Business" className="sm:col-span-2 min-w-0 mt-6 py-6 border-t border-emerald-500/30">

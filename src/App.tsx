@@ -1988,7 +1988,7 @@ ${formatSourceNotes(sourceIds, result.assumptions)}
 
         <button
           onClick={() => handleModeChange(AppMode.PROTECTIVE_DEVICE_SELECTOR)}
-          className="bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
+          className="col-span-2 bg-hardware-card p-5 rounded-3xl border border-hardware-border flex flex-col gap-3 hover:bg-[#1c1d21] transition-all group active:scale-[0.98] relative overflow-hidden"
         >
           <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
             <Shield size={20} />

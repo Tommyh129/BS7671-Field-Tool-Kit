@@ -4,7 +4,9 @@
   margin: 0 auto;
   color: #e5e7eb;
   padding-bottom: 24px;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
 }
 .business * {
   min-width: 0;
@@ -35,6 +37,18 @@
   gap: 8px;
   flex-wrap: wrap;
   margin: 12px 0;
+}
+.business-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.business > header > h1 {
+  flex: 1 0 max-content;
+}
+.business header svg {
+  flex-shrink: 0;
 }
 .business button,
 .business-file {
@@ -199,7 +213,7 @@
 }
 .business pre {
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   font-size: 12px;
   max-width: 100%;
   max-height: 50vh;
@@ -309,6 +323,10 @@
   margin: 0 0 12px;
 }
 @media (max-width: 560px) {
+  .business-header-actions {
+    flex-basis: 100%;
+    width: 100%;
+  }
   .business-fields {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;

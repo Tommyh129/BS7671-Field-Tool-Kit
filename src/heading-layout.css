@@ -1,0 +1,43 @@
+:is(h1, h2, h3, h4, h5, h6, [data-single-line-title]) {
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+.break-words,
+.result-field-value {
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+.result-field-value {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+#main-header > div {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#header-logo {
+  min-width: 0;
+  flex: 1 1 140px;
+}
+
+#header-logo > h1 {
+  flex: 1;
+}
+
+#header-logo > :not(h1),
+#main-header > div > div:last-child {
+  flex-shrink: 0;
+}
+
+#main-header > div > div:last-child {
+  margin-left: auto;
+}
