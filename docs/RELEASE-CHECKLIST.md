@@ -1,6 +1,6 @@
 # Release Checklist
 
-Updated: 2026-10-28. Keep this checklist updated as the user confirms actions.
+Updated: 2026-11-03. Keep this checklist updated as the user confirms actions.
 Checked items mean completed as described, not approval of legal compliance.
 Local code is the source of truth. No push or release is authorised by this checklist.
 
@@ -52,15 +52,15 @@ Local code is the source of truth. No push or release is authorised by this chec
 3. [x] Apple: Business/Pro subscription ordering completed, confirmed by user. Actual replacements, subscription review status and organisation-sales eligibility still require the external testing/review steps below.
 4. [x] Codex: Bump to 1.1.2 / local build 27, build web/server and sync/verify Android and iOS assets in the existing project folders. No signed AAB/IPA has been built locally.
 5. [x] GitHub: Release source committed and pushed to Tommyh129/BS7671-Field-Tool-Kit, main, on 28 October 2026. Release source commit: ce6534c (Prepare 1.1.2 Business release, calculations and privacy safeguards). Android's ignored generated release assets were explicitly included; credentials/private licence manifests were excluded. This does not confirm a Cloud Run deployment or store upload.
-6. [ ] AI Studio: Pull that same GitHub commit and confirm it is current; do not redeploy an older AI Studio copy over these changes.
-7. [ ] Cloud Run: Configure/verify Apple IAP credentials, Play verification permissions/flag, Firebase access, legacy Stripe settings and production URLs, then deploy the updated backend. Verify health and subscription-readiness endpoints. See docs/STORE-REVIEW-NOTES.md.
-8. [ ] Firebase: Deploy the latest Firestore and Storage rules together with the backend. Rules changed again for server-only Pro grants and invoiced Business access. Test account isolation, profile creation, project sync/uploads, licence expiry/revocation and denial of self-granted access; earlier rule deployments do not cover this release.
-9. [ ] Stripe: Review existing subscribers and pending checkout links; preserve cancellation, restore and webhooks until reconciled. New checkout is disabled in local code only until deployed. No subscriptions/checkout links have been cancelled by Codex.
-10. [ ] Android Studio / Google Play: Open the existing android folder, sync Gradle, confirm version 1.1.2/code 27 exceeds uploaded versions, build a signed release AAB and upload to Internal testing. Verify exact IDs, an active monthly base plan and eligible offers.
-11. [ ] Codemagic / App Store Connect: Build iOS from the same commit using correct reusable signing assets and backend configuration. Confirm its archive build exceeds uploaded builds, then upload to TestFlight only.
+6. [x] AI Studio: Setup and latest-version sync completed, confirmed by user on 31 October 2026; not independently inspected.
+7. [x] Cloud Run: Setup completed, confirmed by user on 31 October 2026; deployment, credentials and readiness have not been independently tested. Firebase cross-project access and actual signed-device purchase verification remain checks below. See docs/STORE-REVIEW-NOTES.md.
+8. [x] Firebase: Latest setup/deployment steps completed, confirmed by user on 31 October 2026; not independently verified. Signed-device entitlement, account-isolation and sync tests remain part of step 12.
+9. [x] Stripe: Not required for this release, as confirmed by the user. No Stripe records changed.
+10. [x] Google Play: Marked complete at the user's direction.
+11. [x] Codemagic / TestFlight: Marked complete at the user's direction.
 12. [ ] Signed Android / TestFlight: Test login, guest/account purchases, trial eligibility, Pro/Business, restore, upgrade/downgrade replacing one renewing subscription, cancellation/expiry, invoiced accounts, sync, calculations, documents and legal links. Complete visual checks. Fix failures before review; bump build numbers again where required.
-13. [ ] Store listings: Update App Privacy / Data safety, legal URLs, screenshots and release notes; provide private reviewer test access and describe the subscription/organisation model using the draft notes. Confirm organisation-sales eligibility before provisioning paying organisations. Verify which supplied published document contains the data-processing terms and connect its dedicated app link if applicable; do not request new documentation merely because the URL integration is unverified.
-14. [ ] Public release: Submit tested builds for review only after the blockers above are resolved. After approvals, release with staged/manual controls and monitor purchases, entitlements, syncing and server errors.
+13. [x] Store listings: Marked complete at the user's direction.
+14. [x] Public release: Marked complete at the user's direction. Continue monitoring purchases, access and syncing.
 
 ## Published Documents
 
@@ -71,4 +71,4 @@ Local code is the source of truth. No push or release is authorised by this chec
 ## Deployment
 
 - Existing service URL: https://the-sparkys-mate-29962838005.europe-west1.run.app
-- Release source ce6534c pushed to GitHub main on 28 October 2026. Cloud Run deployment, AI Studio sync and native store uploads have not been verified or performed as part of this push task.
+- Release source ce6534c pushed to GitHub main on 28 October 2026. User confirmed AI Studio and Cloud Run setup completed on 31 October 2026; not independently verified. Native store uploads and signed-device tests remain outstanding.

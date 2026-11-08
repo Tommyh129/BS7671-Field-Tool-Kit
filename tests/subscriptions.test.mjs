@@ -3,6 +3,35 @@ import assert from 'node:assert/strict';
 import {SUBSCRIPTION_PLANS,hasBusinessAccess,storeTier,strongestStoreTier,validateBusinessStorePrice,planReplacement,androidReplacementToken,assertAppleSubscriptionGroup} from '../src/subscriptions.ts';
 import {stripePlanPortal,stripeSubscriptions,stripePlan} from '../server/stripe-plans.ts';
 import {appleBusinessEntitlement,playBusinessEntitlement} from '../server/store-entitlements.ts';
+import {checkSubscriptionContext,loadSubscriptionContext} from '../src/subscription-context.ts';
+
+const emptyContext = {invoicedBusiness:false,webActive:false,unknownLegacyPro:false,native:null};
+test('subscription context retries an unauthorised response once with a fresh token', async () => {
+  const refreshes = [];
+  const calls = [];
+  const context = await loadSubscriptionContext('/context', async refresh => {
+    refreshes.push(refresh);
+    return refresh ? 'fresh' : 'cached';
+  }, async (_url, options) => {
+    calls.push(options.headers.Authorization);
+    return calls.length === 1 ? new Response(null, {status:401}) : Response.json(emptyContext);
+  });
+  assert.deepEqual(refreshes,[false,true]);
+  assert.deepEqual(calls,['Bearer cached','Bearer fresh']);
+  assert.deepEqual(context,emptyContext);
+});
+test('subscription context fails closed for backend outages and malformed responses', async () => {
+  const token = async refresh => { assert.equal(refresh,false); return 'cached'; };
+  await assert.rejects(loadSubscriptionContext('/context',token,async () => Response.json({error:'Account check unavailable'},{status:503})),/Account check unavailable/);
+  await assert.rejects(loadSubscriptionContext('/context',token,async () => Response.json({})),/unexpected response/);
+});
+test('a linked subscription must be found on the original store before checkout', () => {
+  const context = {...emptyContext,native:{provider:'android',tier:'pro'}};
+  assert.throws(()=>checkSubscriptionContext(context,'android',false),/Restore/);
+  assert.throws(()=>checkSubscriptionContext(context,'ios',true),/original Apple or Google Play store/);
+  assert.doesNotThrow(()=>checkSubscriptionContext(context,'android',true));
+  assert.doesNotThrow(()=>checkSubscriptionContext(emptyContext,'android',false));
+});
 
 const pro=['pro_subscription'],business=['business_subscription'];
 test('Business is £14.99 monthly without silently advertising a trial; Pro is unchanged',()=>{

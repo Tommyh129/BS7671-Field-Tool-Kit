@@ -139,16 +139,26 @@ async function startServer() {
     const bearer=req.header('authorization')?.match(/^Bearer (.+)$/)?.[1];
     if(!bearer)return res.status(401).json({error:'Sign in to check your subscription.'});
     let uid:string;
-    try{uid=(await getAuth().verifyIdToken(bearer,true)).uid;}catch{return res.status(401).json({error:'Sign in again to check your subscription.'});}
+    try {
+      uid = (await getAuth().verifyIdToken(bearer, true)).uid;
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (['auth/id-token-expired', 'auth/id-token-revoked', 'auth/invalid-id-token', 'auth/argument-error', 'auth/user-disabled', 'auth/user-not-found'].includes(code || '')) {
+        return res.status(401).json({error:'Sign in again to check your subscription. No payment has been started.'});
+      }
+      console.error('Subscription context: Firebase Auth check failed', /^auth\/[a-z-]+$/.test(code || '') ? code : 'unknown');
+      return res.status(503).json({error:'The subscription service could not verify your account. No payment has been started. Contact support if this continues.'});
+    }
     try{
       const profile=(await db.doc(`users/${uid}`).get()).data()||{};
-      if(!stripe&&(profile.stripeSubscriptionId||profile.subscriptionId||profile.businessStripeSubscriptionId))throw Error('The web billing provider is unavailable. Do not start a separate store subscription.');
+      if(profile.deletionPending)return res.status(409).json({error:'This account is being closed. No payment has been started.'});
+      if(!stripe&&(profile.stripeSubscriptionId||profile.subscriptionId||profile.businessStripeSubscriptionId))return res.status(503).json({error:'Your existing web subscription could not be checked. No payment has been started.'});
       const web=stripe?(await stripeSubscriptions(stripe,uid,profile))[0]:null;
       // An old expiry alone does not prove that a native auto-renewal stopped.
       // Keep changes on the original store until that source is reconciled.
       const invoiced = profile.invoicedBusiness;
       res.json({webActive:Boolean(web),invoicedBusiness:hasInvoicedBusinessAccess(profile) || (invoiced?.revoked === false && invoiced.expiresAt > Date.now()),native:profile.nativeSubscription?{provider:profile.nativeSubscription.provider,tier:profile.nativeSubscription.tier}:null,unknownLegacyPro:(profile.isPro===true||profile.businessUntil>0)&&!web&&!profile.nativeSubscription&&!profile.isBusiness});
-    }catch(error){res.status(409).json({error:error instanceof Error?error.message:'Subscription checks are unavailable. Restore before paying again.'});}
+    }catch{console.error('Subscription context: billing profile check failed');res.status(503).json({error:'Subscription checks are unavailable. No payment has been started.'});}
   });
 
   app.post('/api/subscriptions/restore',async(req,res)=>{

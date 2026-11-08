@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { downloadFile } from './utils/download';
+import { checkSubscriptionContext, loadSubscriptionContext } from './subscription-context';
 import { secureLegalUrl, PRIVACY_NOTICE_VERSION, PUBLISHED_PRIVACY_POLICY_URL, PUBLISHED_TERMS_URL } from './privacy/config';
 import { allowSandboxBusiness } from './privacy/sandbox';
 import { clearBusinessDeviceData, readBusiness } from './business/store';
@@ -1184,7 +1185,7 @@ export default function App() {
 
   const handleUpgrade = async () => {
     if (purchaseAttempt.current) return;
-    const purchaseUser = auth.currentUser || user;
+    const purchaseUser = auth.currentUser;
     console.log("App: handleUpgrade triggered", {
       hasUser: !!purchaseUser,
       effectiveIsPro,
@@ -1215,14 +1216,10 @@ export default function App() {
         const owned=await InAppPurchase.getActivePurchases({requireComplete:true} as any);
         const replacement=planReplacement(owned.purchases,upgradeTier,nativeProProductIds(),nativeBusinessProductIds());
         if(purchaseUser){
-          const contextResponse=await fetch(billingApiUrl('/api/subscriptions/context'),{headers:{Authorization:`Bearer ${await purchaseUser.getIdToken()}`},signal:AbortSignal.timeout(20000),cache:'no-store'});
-          const context=await contextResponse.json();
-          if(!contextResponse.ok)throw Error(context.error||'Existing subscriptions could not be checked. No payment has been started.');
-          if(context.invoicedBusiness)throw Error('Your organisation provides or has scheduled Business access. Contact your administrator before purchasing a personal subscription. No payment has been started.');
-          if(context.webActive)throw Error('Change your existing subscription on the web where it was purchased. A separate store subscription will not be started.');
-          if(context.native&&context.native.provider!==purchasePlatform)throw Error('Change your subscription through the original Apple or Google Play store. A second subscription will not be started.');
-          if(context.unknownLegacyPro&&!replacement)throw Error('Restore your existing subscription on the device/store where it was purchased before changing plans. No new payment has been started.');
+          const context = await loadSubscriptionContext(billingApiUrl('/api/subscriptions/context'), refresh => purchaseUser.getIdToken(refresh));
+          checkSubscriptionContext(context, purchasePlatform, Boolean(replacement));
         }
+        if (auth.currentUser?.uid !== purchaseUser?.uid) throw Error('The signed-in account changed. No payment has been started.');
         if(replacement?.samePlan){await handleSuccessfulPurchase({promptForAccount:true,tier:upgradeTier,purchases:owned.purchases});return;}
         if (upgradeTier === 'business' || replacement) {
           const readyResponse = await fetch(billingApiUrl('/api/subscriptions/business/ready'), {signal:AbortSignal.timeout(15000),cache:'no-store'});
@@ -1286,6 +1283,7 @@ export default function App() {
           productType: PRO_PRODUCT_TYPE,
           eligibleOfferReturned: Boolean(offerToken)
         });
+        if (auth.currentUser?.uid !== purchaseUser?.uid) throw Error('The signed-in account changed. No payment has been started.');
         const transaction = await InAppPurchase.purchaseProduct({
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
@@ -1293,6 +1291,9 @@ export default function App() {
           ...(purchasePlatform === 'android' && replacement ? {oldProductId:replacement.productId,oldPurchaseToken:androidReplacementToken(replacement.purchase.receipt)} : {}),
           ...(purchasePlatform === 'ios' ? {userId:crypto.randomUUID()} : nativePurchaseUserOptions(purchaseUser?.uid))
         } as any) as any;
+        if (auth.currentUser?.uid !== purchaseUser?.uid) {
+          throw Error('The signed-in account changed during checkout. Return to the original account and use Restore Purchases before trying again.');
+        }
         console.info('[BillingDiagnostics] Native purchase call completed', {
           productId: product.productId,
           status: transaction?.status,
@@ -1301,7 +1302,9 @@ export default function App() {
           hasTransactionId: Boolean(transaction?.transactionId)
         });
 
-        if (transaction?.transactionId || transaction?.status === 'purchased') {
+        if (transaction?.status === 'pending') {
+          alert('Your purchase is pending approval in the store. Your subscription will unlock once the purchase completes.');
+        } else if (transaction?.transactionId || transaction?.status === 'purchased') {
           if(purchasePlatform==='ios'&&replacement){
             const refreshed=await InAppPurchase.getActivePurchases({});
             const current=purchaseTier(refreshed.purchases);
@@ -1313,8 +1316,6 @@ export default function App() {
           if (transaction.productId !== product.productId) throw Error('The store returned a different product. Use Restore Purchases; do not purchase again.');
           console.log("App: Native Purchase success ->", transaction.transactionId);
           await handleSuccessfulPurchase({ promptForAccount: true, tier:upgradeTier, purchases:[transaction] });
-        } else if (transaction?.status === 'pending') {
-          alert('Your purchase is pending approval in the store. Your subscription will unlock once the purchase completes.');
         } else {
           throw new Error(transaction?.errorMessage || transaction?.errorCode || 'The store did not complete the purchase.');
         }
@@ -1324,7 +1325,7 @@ export default function App() {
         try {
           const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(purchaseUser?.uid));
           const tier = purchaseTier(purchases);
-          if (tier === upgradeTier) {
+          if (tier === upgradeTier && auth.currentUser?.uid === purchaseUser?.uid) {
             await handleSuccessfulPurchase({ promptForAccount: true, tier, purchases });
             return;
           }
@@ -1339,7 +1340,7 @@ export default function App() {
         const failureMessage = String(error?.message || 'Unknown error').trim().replace(/[.\s]+$/, '');
         const billingResponse = failedAttemptDiagnostics?.responseCode;
         const billingStage = failedAttemptDiagnostics?.lastStage;
-        const billingDetail = billingResponse === null || billingResponse === undefined
+        const billingDetail = !ANDROID_BILLING_DIAGNOSTICS_ENABLED || !billingResponse
           ? ''
           : ` Google Play response: ${billingResponse}${billingStage ? ` at ${billingStage}` : ''}.`;
         alert(`Purchase failed: ${failureMessage}.${billingDetail} Please try again.`);
