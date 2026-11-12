@@ -3,7 +3,7 @@ export type BillingProvider = 'ios' | 'android' | 'stripe';
 export interface StoreSubscription {provider:'ios'|'android';tier:SubscriptionTier;expiresAt:number}
 export const SUBSCRIPTION_PLANS = {
   pro: { name: 'Pro', monthlyPence: 599, price: '£5.99/month', trialDays: 30 },
-  business: { name: 'Business', monthlyPence: 1499, price: '£14.99/month', trialDays: 0 },
+  business: { name: 'Business', monthlyPence: 1499, price: '£14.99/month', trialDays: 0, androidTrialMonths: 1 },
 } as const;
 
 export interface BusinessAccess {
@@ -38,9 +38,22 @@ export function strongestStoreTier(purchases: {productId?: string | null}[], pro
 export function subscriptionApiUrl(path: string, native: boolean, nativeUrl: (path: string) => string) {
   return native ? nativeUrl(path) : new URL(path, window.location.origin).href;
 }
-export function validateBusinessStorePrice(product: {currency?:string;currencyCode?:string;priceAsDecimal?:number;price?:string}) {
-  const currency=product.currencyCode || product.currency;
-  const amount=product.priceAsDecimal ?? Number(product.price);
+export function businessOfferCopy(platform: string, changingPlan = false) {
+  const trial = platform === 'android' && !changingPlan;
+  return {
+    price: trial ? '1 month free if eligible, then £14.99/month' : SUBSCRIPTION_PLANS.business.price,
+    button: trial ? 'View 1 Month Free Trial Offer' : 'Subscribe for £14.99/month',
+    terms: trial
+      ? 'Eligible Google Play accounts receive 1 month free, then £14.99/month. If you are not eligible, the paid monthly plan may be offered instead. Google Play confirms eligibility, local price and when billing starts before you agree. '
+      : changingPlan
+        ? 'Business costs £14.99/month. Plan changes use your existing subscription and do not promise a new trial. The store confirms the effective date, local price and any credit before you agree. '
+        : 'Business costs £14.99/month, billed monthly. The store confirmation shows your local price. ',
+  };
+}
+export function validateBusinessStorePrice(product: {currency?:string;currencyCode?:string;priceAsDecimal?:number;price?:string;recurringPriceAsDecimal?:number;recurringCurrency?:string;recurringBillingPeriod?:string}) {
+  if (product.recurringBillingPeriod && product.recurringBillingPeriod !== 'P1M') throw Error('Business requires a monthly plan. No payment has been started.');
+  const currency=product.recurringCurrency || product.currencyCode || product.currency;
+  const amount=product.recurringPriceAsDecimal ?? product.priceAsDecimal ?? Number(product.price);
   if (!currency || !Number.isFinite(amount) || amount<=0) throw Error('The store did not return a paid Business price. No payment has been started.');
   if (currency==='GBP' && Math.round(amount*100)!==SUBSCRIPTION_PLANS.business.monthlyPence) throw Error(`The Business price in the store does not match ${SUBSCRIPTION_PLANS.business.price}. Contact support; no payment has been started.`);
 }

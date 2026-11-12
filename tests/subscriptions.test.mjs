@@ -4,6 +4,7 @@ import {SUBSCRIPTION_PLANS,hasBusinessAccess,storeTier,strongestStoreTier,valida
 import {stripePlanPortal,stripeSubscriptions,stripePlan} from '../server/stripe-plans.ts';
 import {appleBusinessEntitlement,playBusinessEntitlement} from '../server/store-entitlements.ts';
 import {checkSubscriptionContext,loadSubscriptionContext} from '../src/subscription-context.ts';
+import {businessOfferCopy} from '../src/subscriptions.ts';
 
 const emptyContext = {invoicedBusiness:false,webActive:false,unknownLegacyPro:false,native:null};
 test('subscription context retries an unauthorised response once with a fresh token', async () => {
@@ -34,11 +35,26 @@ test('a linked subscription must be found on the original store before checkout'
 });
 
 const pro=['pro_subscription'],business=['business_subscription'];
-test('Business is £14.99 monthly without silently advertising a trial; Pro is unchanged',()=>{
+test('Business offers eligible Google Play accounts one month free; Apple and Pro are unchanged',()=>{
   assert.equal(SUBSCRIPTION_PLANS.business.monthlyPence,1499);
   assert.equal(SUBSCRIPTION_PLANS.business.trialDays,0);
+  assert.equal(SUBSCRIPTION_PLANS.business.androidTrialMonths,1);
   assert.equal(SUBSCRIPTION_PLANS.pro.monthlyPence,599);
   assert.equal(SUBSCRIPTION_PLANS.pro.trialDays,30);
+});
+test('Business trial wording is platform-specific and does not promise another trial for plan changes',()=>{
+  assert.match(businessOfferCopy('android').price,/1 month free if eligible/);
+  assert.match(businessOfferCopy('android').terms,/paid monthly plan may be offered/);
+  for (const platform of ['ios','web']) assert.equal(businessOfferCopy(platform).price,'£14.99/month');
+  assert.equal(businessOfferCopy('android',true).price,'£14.99/month');
+  assert.match(businessOfferCopy('android',true).terms,/do not promise a new trial/);
+});
+test('Business validates the recurring monthly price after a zero-price trial',()=>{
+  const product={currency:'GBP',priceAsDecimal:0,recurringPriceAsDecimal:14.99,recurringCurrency:'GBP',recurringBillingPeriod:'P1M'};
+  assert.doesNotThrow(()=>validateBusinessStorePrice(product));
+  assert.throws(()=>validateBusinessStorePrice({...product,recurringPriceAsDecimal:5.99}));
+  assert.throws(()=>validateBusinessStorePrice({...product,recurringBillingPeriod:'P1Y'}));
+  assert.throws(()=>validateBusinessStorePrice({currency:'GBP',priceAsDecimal:0}));
 });
 test('Business validates native UK pricing before payment and accepts positive local prices',()=>{
   assert.doesNotThrow(()=>validateBusinessStorePrice({currency:'GBP',priceAsDecimal:14.99}));

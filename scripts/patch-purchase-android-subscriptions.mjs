@@ -1708,6 +1708,20 @@ replacementPlugin = replaceRequired(
         billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken, oldProductId, oldPurchaseToken) { result ->`,
   'Android bridge subscription replacement'
 );
+replacementPlugin = replaceRequired(
+  replacementPlugin,
+  `                             val pricingPhase = subscriptionOffer?.pricingPhases?.pricingPhaseList?.firstOrNull()`,
+  `                             val pricingPhase = subscriptionOffer?.pricingPhases?.pricingPhaseList?.firstOrNull()
+                             val recurringPhase = subscriptionOffer?.pricingPhases?.pricingPhaseList?.lastOrNull {
+                                 it.recurrenceMode == com.android.billingclient.api.ProductDetails.RecurrenceMode.INFINITE_RECURRING
+                             }
+                             recurringPhase?.let {
+                                 put("recurringPriceAsDecimal", it.priceAmountMicros / 1_000_000.0)
+                                 put("recurringCurrency", it.priceCurrencyCode)
+                                 put("recurringBillingPeriod", it.billingPeriod)
+                             }`,
+  'Android recurring price after introductory offer'
+);
 writeIfChanged(pluginPath, replacementPlugin);
 
 console.log('Patched capacitor-plugin-purchase Android subscription and Play Billing 9.0.0 support.');

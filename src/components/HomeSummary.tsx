@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { Calculator, ChevronRight, FolderOpen, Crown, Check } from 'lucide-react';
 import { readBusiness, subscribeBusiness, syncBusiness } from '../business/store';
 import { today, ukDate, type BusinessRecord } from '../business/model';
 import { dueProjects, frequentTools, readToolUsage, TOOL_LABELS } from '../services/homeSummary';
 import type { AppMode } from '../types';
-import { SUBSCRIPTION_PLANS } from '../subscriptions';
+import { businessOfferCopy } from '../subscriptions';
 
 export default function HomeSummary({ uid, business, pro, openProject, openTool, openProjects, upgradeBusiness }: {
   uid?: string; business: boolean; pro: boolean; openProject: (id: string) => void;
@@ -76,7 +77,7 @@ export default function HomeSummary({ uid, business, pro, openProject, openTool,
         <Crown size={24} className="text-emerald-400 shrink-0"/>
         <h3 className="text-xl font-bold text-white">Upgrade to Business</h3>
       </div>
-      <p className="text-lg font-bold text-emerald-400 mb-4">{SUBSCRIPTION_PLANS.business.price}</p>
+      <p className="text-lg font-bold text-emerald-400 mb-4">{businessOfferCopy(Capacitor.getPlatform(), pro).price}</p>
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5 text-sm text-gray-300">
         {['All Pro calculation and design tools', 'Project folders and start-date scheduling',
           'Quotes, estimates and invoices', 'Materials lists and saved calculations',

@@ -1,6 +1,6 @@
 # Business subscription
 
-Business is advertised at GBP 14.99/month with no free trial and includes all Pro
+Business is advertised at GBP 14.99/month, with a one-month trial for eligible Google Play accounts, and includes all Pro
 tools plus Projects, business profile/branding, quotes, materials and invoicing.
 Pro remains GBP 5.99/month with its existing trial. Pro alone cannot unlock
 Projects. Existing owner records/invoice PDFs remain exportable without Business.
@@ -19,8 +19,11 @@ Firebase rules/server code. Do not release until the following are configured.
    you also change the offer/disclosure. Test with Sandbox/TestFlight.
 2. Google Play Console: create `business_subscription`, activate one monthly
    auto-renewing base plan at GBP 14.99 in the UK and appropriate local prices.
-   Do not configure a free-trial offer: this offer advertises immediate monthly
-   billing. Test from a Play testing track with a licence tester. Both plan-change
+   The active one-month free-trial offer is advertised only to new Android purchasers,
+   subject to Google's eligibility. Ineligible accounts may receive the paid base plan.
+   The native bridge supplies the recurring paid phase separately so a zero-price trial
+   does not fail Business price validation. Apple has no confirmed Business trial and its
+   wording remains monthly paid access. Test from a Play testing track with a licence tester. Both plan-change
    directions use the existing purchase token with Google's WITH_TIME_PRORATION
    replacement mode: the old subscription is replaced immediately, unused value
    changes the next billing date, and a second subscription is not created.

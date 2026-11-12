@@ -45,6 +45,7 @@ import {
 import { toPng } from 'html-to-image';
 import { downloadFile } from './utils/download';
 import { checkSubscriptionContext, loadSubscriptionContext } from './subscription-context';
+import { businessOfferCopy } from './subscriptions';
 import { secureLegalUrl, PRIVACY_NOTICE_VERSION, PUBLISHED_PRIVACY_POLICY_URL, PUBLISHED_TERMS_URL } from './privacy/config';
 import { allowSandboxBusiness } from './privacy/sandbox';
 import { clearBusinessDeviceData, readBusiness } from './business/store';
@@ -2318,7 +2319,7 @@ ${formatSourceNotes(sourceIds, result.assumptions)}
           ) : mode === AppMode.PROJECTS ? (
             !effectiveIsBusiness ? <section className="py-5">
               <div className="flex items-center gap-3 text-emerald-500 mb-5"><Crown size={28}/><h2 className="text-2xl font-bold">Business</h2></div>
-              <p className="text-xl font-bold mb-2">£14.99/month</p>
+              <p className="text-xl font-bold mb-2">{businessOfferCopy(Capacitor.getPlatform(), effectiveIsPro).price}</p>
               <p className="text-gray-400 text-sm mb-6">All Pro tools plus Projects, quotes, invoices and branded client documents.</p>
               <button onClick={()=>openUpgrade('business')} className="w-full min-h-14 bg-emerald-500 text-black px-4 py-4 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2"><Crown size={18}/>Get Business</button>
               <BusinessArchive onSignIn={()=>openAuthModal(false)}/>
@@ -3617,7 +3618,7 @@ ${formatSourceNotes(sourceIds, result.assumptions)}
 
               <div className="text-center mb-5 sm:mb-7">
                 <h3 className="text-2xl font-bold mb-2">{upgradeTier === 'business' ? 'Unlock Business' : 'Unlock Pro Tools'}</h3>
-                <p className="text-gray-400 text-sm">{upgradeTier === 'business' ? '£14.99/month. All Pro tools plus your business workspace.' : 'Get the full BS 7671 design suite and advanced features.'}</p>
+                <p className="text-gray-400 text-sm">{upgradeTier === 'business' ? `${businessOfferCopy(Capacitor.getPlatform(), effectiveIsPro).price}. All Pro tools plus your business workspace.` : 'Get the full BS 7671 design suite and advanced features.'}</p>
                 <div role="group" aria-label="Subscription plan" className="flex border border-white/10 rounded-lg overflow-hidden mt-4">
                   <button disabled={isUpgrading} aria-pressed={upgradeTier==='pro'} onClick={()=>setUpgradeTier('pro')} className={`flex-1 min-h-11 text-xs font-bold ${upgradeTier==='pro'?'bg-emerald-500/20 text-emerald-400':'text-gray-400'}`}>Pro · £5.99/mo</button>
                   <button disabled={isUpgrading} aria-pressed={upgradeTier==='business'} onClick={()=>setUpgradeTier('business')} className={`flex-1 min-h-11 text-xs font-bold ${upgradeTier==='business'?'bg-emerald-500/20 text-emerald-400':'text-gray-400'}`}>Business · £14.99/mo</button>
@@ -3667,7 +3668,7 @@ ${formatSourceNotes(sourceIds, result.assumptions)}
                     Processing...
                   </>
                 ) : (
-                  (upgradeTier === 'business' ? effectiveIsBusiness : effectiveIsPro && !effectiveIsBusiness) ? 'Current Plan' : effectiveIsBusiness && upgradeTier==='pro' ? 'Change to Pro · £5.99/month' : effectiveIsPro && upgradeTier==='business' ? 'Change to Business · £14.99/month' : upgradeTier === 'business' ? 'Subscribe for £14.99/month' : 'Start 1 Month Free Trial'
+                  (upgradeTier === 'business' ? effectiveIsBusiness : effectiveIsPro && !effectiveIsBusiness) ? 'Current Plan' : effectiveIsBusiness && upgradeTier==='pro' ? 'Change to Pro · £5.99/month' : effectiveIsPro && upgradeTier==='business' ? 'Change to Business · £14.99/month' : upgradeTier === 'business' ? businessOfferCopy(Capacitor.getPlatform()).button : 'Start 1 Month Free Trial'
                 )}
               </button>
 
@@ -3806,7 +3807,7 @@ ${formatSourceNotes(sourceIds, result.assumptions)}
                 </div>
 
                 {!Capacitor.isNativePlatform() ? <p className="text-xs text-gray-400 text-center">{STORE_ONLY_PURCHASE_MESSAGE}</p> : <p className="text-[8px] text-gray-600 text-center leading-relaxed max-w-[280px]">
-                  {upgradeTier === 'business' ? 'Business costs £14.99/month, billed monthly with no free trial. The store confirmation shows your local price. ' : effectiveIsBusiness ? 'Pro costs £5.99/month. Changing plans does not start a new free trial. Your payment provider confirms the effective date and any credit before you agree. ' : 'Payment of £5.99/mo will be charged to your account after the 1 month free trial. '}
+                  {upgradeTier === 'business' ? businessOfferCopy(Capacitor.getPlatform(), effectiveIsPro).terms : effectiveIsBusiness ? 'Pro costs £5.99/month. Changing plans does not start a new free trial. Your payment provider confirms the effective date and any credit before you agree. ' : 'Payment of £5.99/mo will be charged to your account after the 1 month free trial. '}
                   Subscription automatically renews unless auto-renew is turned off at least 24-hours before the end of the current period.
                   Manage your subscription in your Account Settings.
                 </p>}
