@@ -4,7 +4,25 @@ import {SUBSCRIPTION_PLANS,hasBusinessAccess,storeTier,strongestStoreTier,valida
 import {stripePlanPortal,stripeSubscriptions,stripePlan} from '../server/stripe-plans.ts';
 import {appleBusinessEntitlement,playBusinessEntitlement} from '../server/store-entitlements.ts';
 import {checkSubscriptionContext,loadSubscriptionContext} from '../src/subscription-context.ts';
-import {businessOfferCopy} from '../src/subscriptions.ts';
+import {businessOfferCopy,businessStoreProductIds,assertBusinessVerificationProduct} from '../src/subscriptions.ts';
+import {validateReleaseConfig} from '../scripts/release-config.ts';
+
+test('Android Business uses the exact registered Play spelling for lookup, restores and verification', () => {
+  const ids = businessStoreProductIds('android', 'business_subscription');
+  assert.deepEqual(ids, ['business_subsciption', 'business_subscription']);
+  assert.equal(storeTier('business_subsciption', ['pro_subscription'], ids), 'business');
+  assert.equal(planReplacement([{productId:'business_subsciption'}], 'pro', ['pro_subscription'], ids).tier, 'business');
+  assert.equal(planReplacement([{productId:'pro_subscription'}], 'business', ['pro_subscription'], ids).productId, 'pro_subscription');
+  assert.deepEqual(businessStoreProductIds('ios'), ['business_subscription']);
+  assert.doesNotThrow(() => validateReleaseConfig({VITE_ANDROID_BUSINESS_PRODUCT_ID:'business_subsciption'}));
+  assert.throws(() => validateReleaseConfig({VITE_IOS_BUSINESS_PRODUCT_ID:'business_subsciption'}));
+});
+test('Business checkout rejects an old backend or one that cannot verify the selected product', () => {
+  assert.throws(() => assertBusinessVerificationProduct({android:true}, 'android', 'business_subsciption'), /server update/);
+  assert.throws(() => assertBusinessVerificationProduct({businessProductIds:{android:['business_subscription']}}, 'android', 'business_subsciption'), /no payment/);
+  assert.doesNotThrow(() => assertBusinessVerificationProduct({businessProductIds:{android:businessStoreProductIds('android')}}, 'android', 'business_subsciption'));
+  assert.throws(() => assertBusinessVerificationProduct({businessProductIds:{android:'business_subsciption'}}, 'android', 'business_subsciption'));
+});
 
 const emptyContext = {invoicedBusiness:false,webActive:false,unknownLegacyPro:false,native:null};
 test('subscription context retries an unauthorised response once with a fresh token', async () => {

@@ -4,7 +4,7 @@
   "version": "1.1.2",
   "type": "module",
   "scripts": {
-    "test": "node --import ./scripts/register-test-loader.mjs --test tests/electrical.test.mjs tests/dc-cable.test.mjs tests/business.test.mjs tests/branding.test.mjs tests/invoices.test.mjs tests/subscriptions.test.mjs tests/invoiced-licences.test.mjs tests/rams.test.mjs && node --import ./scripts/business-test-loader.mjs --test tests/business-store.test.mjs && npm run test:privacy",
+    "test": "node --import ./scripts/register-test-loader.mjs --test tests/electrical.test.mjs tests/dc-cable.test.mjs tests/business.test.mjs tests/branding.test.mjs tests/invoices.test.mjs tests/subscriptions.test.mjs tests/android-billing-patch.test.mjs tests/billing-deployment.test.mjs tests/invoiced-licences.test.mjs tests/rams.test.mjs && node --import ./scripts/business-test-loader.mjs --test tests/business-store.test.mjs && npm run test:privacy",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "check:release-assets": "node scripts/check-release-assets.mjs",
@@ -15,6 +15,8 @@
     "build": "vite build --configLoader runner",
     "build:server": "node scripts/build-server.mjs",
     "build:full": "npm run build && npm run build:server",
+    "gcp-build": "npm run build:full",
+    "check:billing-deployment": "node scripts/check-billing-deployment.mjs",
     "start": "node build/server/server.cjs",
     "assets:generate": "capacitor-assets generate && node scripts/fix-pwa-manifest-icon-types.mjs",
     "postinstall": "node scripts/patch-android-gradle-compat.mjs && node scripts/patch-purchase-android-subscriptions.mjs && node scripts/patch-purchase-spm.mjs",

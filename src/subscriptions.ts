@@ -1,5 +1,20 @@
 export type SubscriptionTier = 'pro' | 'business';
 export type BillingProvider = 'ios' | 'android' | 'stripe';
+// Play Console's existing Business product was registered with this spelling.
+// Keep the canonical ID as an alias for existing configuration and purchases.
+export function businessStoreProductIds(platform: string, configured?: string) {
+  return [...new Set([
+    ...(platform === 'android' ? ['business_subsciption'] : []),
+    configured?.trim(),
+    'business_subscription',
+  ].filter((id): id is string => Boolean(id)))];
+}
+export function assertBusinessVerificationProduct(ready: {businessProductIds?:Record<string, unknown>}, platform: string, productId: string) {
+  const ids = ready.businessProductIds?.[platform];
+  if (!Array.isArray(ids) || !ids.includes(productId)) {
+    throw Error('Business purchase verification needs a server update for this product. Contact support; no payment has been started.');
+  }
+}
 export interface StoreSubscription {provider:'ios'|'android';tier:SubscriptionTier;expiresAt:number}
 export const SUBSCRIPTION_PLANS = {
   pro: { name: 'Pro', monthlyPence: 599, price: '£5.99/month', trialDays: 30 },

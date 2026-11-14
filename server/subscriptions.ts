@@ -5,8 +5,9 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { GoogleAuth } from 'google-auth-library';
 import { appleBusinessEntitlement, playBusinessEntitlement } from './store-entitlements';
 import type { SubscriptionTier } from '../src/subscriptions';
+import { businessStoreProductIds } from '../src/subscriptions';
 
-const businessId = (platform: string) => process.env[platform === 'ios' ? 'IOS_BUSINESS_PRODUCT_ID' : 'ANDROID_BUSINESS_PRODUCT_ID'] || 'business_subscription';
+const businessIds = (platform: string) => businessStoreProductIds(platform, process.env[platform === 'ios' ? 'IOS_BUSINESS_PRODUCT_ID' : 'ANDROID_BUSINESS_PRODUCT_ID']);
 const proIds = (platform:string) => [process.env[platform==='ios'?'IOS_PRO_PRODUCT_ID':'ANDROID_PRO_PRODUCT_ID']||process.env.PRO_PRODUCT_ID||'pro_subscription',...(process.env.PRO_PRODUCT_ID_ALIASES||'').split(',')].map(id=>id.trim()).filter(Boolean);
 const bundleId = () => process.env.IOS_BUNDLE_ID || 'com.bs7671.fieldtoolkit';
 const packageName = () => process.env.ANDROID_PACKAGE_NAME || 'com.bs7671.fieldtoolkit';
@@ -47,13 +48,16 @@ async function playSubscription(receipt: string, productId:string) {
 }
 
 export function installSubscriptionRoutes(app: Express) {
-  app.get('/api/subscriptions/business/ready', (_req,res) => res.json({ios:appleReady(),android:playReady()}));
+  app.get('/api/subscriptions/business/ready', (_req,res) => {
+    res.setHeader('Cache-Control','no-store');
+    res.json({ios:appleReady(),android:playReady(),businessProductIds:{ios:businessIds('ios'),android:businessIds('android')}});
+  });
   app.post(['/api/subscriptions/business/verify','/api/subscriptions/verify'], async(req,res) => {
     res.setHeader('Cache-Control','no-store');
     try {
       const platform = req.body.platform;
       const productId=req.body.productId;
-      const tier:SubscriptionTier|null=productId===businessId(platform)?'business':proIds(platform).includes(productId)?'pro':null;
+      const tier:SubscriptionTier|null=businessIds(platform).includes(productId)?'business':proIds(platform).includes(productId)?'pro':null;
       if (!['ios','android'].includes(platform) || !tier) {res.status(400).json({error:'Invalid subscription product.'});return;}
       const bearer = req.header('authorization')?.match(/^Bearer (.+)$/)?.[1];
       const uid = bearer ? (await getAuth().verifyIdToken(bearer,true)).uid : undefined;

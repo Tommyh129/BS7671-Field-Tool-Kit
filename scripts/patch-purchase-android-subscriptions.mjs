@@ -31,7 +31,9 @@ const evolvedPatchMarkers = {
   'Android plugin purchase request diagnostics': 'offerTokenProvided=',
   'Android plugin missing activity diagnostics': 'billing.recordDiagnosticFailure(',
   'Android plugin product type read': 'val billing = requireBilling(call, "getProducts")',
-  'Android plugin product type pass-through': 'billing.getProducts(productIds, productType)',
+  'Android plugin product type pass-through': 'billing.getProducts',
+  'Android lazy billing product query call': 'billing.getProductsWithRecovery(',
+  'Android billing diagnostic snapshot accessor': 'fun getBillingDiagnostics(): BillingDiagnosticsSnapshot',
   'Android billing diagnostics bridge method': 'failedCheck", "billing_initialization_failed"',
   'Android plugin activity failure snapshot': 'billing.recordDiagnosticFailure(',
   'Android plugin selected offer token pass-through': 'billing.purchaseProduct(currentActivity, productId, userId, productType, offerToken',
@@ -1638,6 +1640,79 @@ replacementImplementation = replaceRequired(
   'offerToken: String? = null, oldProductId: String? = null, oldPurchaseToken: String? = null, callback: (PurchaseResult) -> Unit)',
   'Android subscription replacement arguments'
 );
+replacementImplementation = replaceBetween(
+  replacementImplementation,
+  '    fun getSubscriptionPurchasesForChange(',
+  '    fun getActivePurchases(',
+  `    fun getSubscriptionPurchasesForChange(callback: (List<TransactionDetails>?, String?) -> Unit) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        var completed = false
+        fun finish(purchases: List<TransactionDetails>?, error: String?) {
+            if (completed) return
+            completed = true
+            handler.removeCallbacksAndMessages(null)
+            callback(purchases, error)
+        }
+        fun query(attempt: Int) {
+            if (completed) return
+            if (!::billingClient.isInitialized) {
+                finish(null, "Google Play Billing is not initialized. No payment has been started.")
+                return
+            }
+            val params = QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
+            try {
+                // BillingClient's automatic service reconnection runs before each read-only retry.
+                billingClient.queryPurchasesAsync(params) { result, purchases ->
+                    handler.post {
+                        if (!completed) {
+                            logBillingResult("subscriptionReplacementQuery", result)
+                            val transient = result.responseCode in setOf(
+                                BillingClient.BillingResponseCode.SERVICE_DISCONNECTED,
+                                BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE,
+                                BillingClient.BillingResponseCode.NETWORK_ERROR,
+                                BillingClient.BillingResponseCode.ERROR,
+                                -3
+                            )
+                            when {
+                                transient && attempt < 2 -> {
+                                    Log.i(TAG, "Retrying existing subscription check; attempt=\${attempt + 2} responseCode=\${result.responseCode}")
+                                    handler.postDelayed({ query(attempt + 1) }, 500L * (attempt + 1))
+                                }
+                                result.responseCode != BillingClient.BillingResponseCode.OK -> {
+                                    lastBillingFailedCheck = "subscription_query_failed"
+                                    finish(null, "Google Play could not reconnect to check your existing subscription. Response " + result.responseCode + ": " + sanitizeDiagnosticText(result.debugMessage) + ". No payment has been started. Open Google Play, check your connection and try again.")
+                                }
+                                purchases.any { it.purchaseState == Purchase.PurchaseState.PENDING } -> {
+                                    lastBillingFailedCheck = "subscription_payment_pending"
+                                    finish(null, "A subscription payment is pending. Wait for it to complete before changing plans.")
+                                }
+                                else -> {
+                                    lastBillingFailedCheck = "none"
+                                    finish(purchases.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }.map { createTransactionDetails(it) }, null)
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                recordDiagnosticFailure("subscriptionReplacementQuery", "subscription_query_exception", "Existing subscription check could not start.")
+                finish(null, "Google Play could not check your existing subscription. No payment has been started. Please try again.")
+            }
+        }
+        handler.post {
+            handler.postDelayed({
+                if (!completed) {
+                    recordDiagnosticFailure("subscriptionReplacementQuery", "subscription_query_timeout", "Existing subscription check timed out.")
+                    finish(null, "Google Play took too long to check your existing subscription. No payment has been started. Check your connection and try again.")
+                }
+            }, 20000L)
+            query(0)
+        }
+    }
+
+`,
+  'Android bounded read-only subscription query retry'
+);
 replacementImplementation = replaceRequired(
   replacementImplementation,
   '                 val billingFlowParams = BillingFlowParams.newBuilder()\n',
@@ -1661,6 +1736,103 @@ replacementImplementation = replaceRequired(
 `,
   'Android replace existing subscription billing flow'
 );
+const recoveredProductQuery = `    fun getProductsWithRecovery(productIds: List<String>, productType: String?, callback: (List<ProductDetails>?, String?) -> Unit) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        var completed = false
+        fun finish(products: List<ProductDetails>?, error: String?) {
+            if (completed) return
+            completed = true
+            handler.removeCallbacksAndMessages(null)
+            productDetailsList = products.orEmpty().toMutableList()
+            callback(products, error)
+        }
+        fun query(attempt: Int) {
+            if (completed) return
+            val type = billingProductTypeFor(productType)
+            try {
+                val params = QueryProductDetailsParams.newBuilder().setProductList(productIds.map {
+                    QueryProductDetailsParams.Product.newBuilder().setProductId(it).setProductType(type).build()
+                }).build()
+                billingClient.queryProductDetailsAsync(params) { result, details ->
+                    handler.post {
+                        if (!completed) {
+                            logBillingResult("queryProductDetailsAsync", result)
+                            val products = details.productDetailsList.filter { it.productType == type && it.productId in productIds }
+                            val missing = details.unfetchedProductList
+                            val missingStatus = missing.joinToString(", ") { "\${it.productId}:\${it.statusCode}" }
+                            Log.i(TAG, "[BillingDiagnostics] productDetailsReturned=\${products.isNotEmpty()} unfetchedProducts=$missingStatus attempt=\${attempt + 1}")
+                            diagnosticReturnedProductIds = products.map { it.productId }
+                            diagnosticProductDetailsReturned = products.isNotEmpty()
+                            val offers = products.flatMap { it.subscriptionOfferDetails.orEmpty() }
+                            diagnosticEligibleOfferCount = offers.size
+                            diagnosticEligibleOfferReturned = offers.isNotEmpty()
+                            val transient = result.responseCode in setOf(-1, -3, 2, 6, 12)
+                            val emptyUnknown = result.responseCode == BillingClient.BillingResponseCode.OK && products.isEmpty() &&
+                                (missing.isEmpty() || missing.all { it.statusCode == UnfetchedProduct.StatusCode.UNKNOWN })
+                            when {
+                                (transient || emptyUnknown) && attempt < 2 -> handler.postDelayed({ query(attempt + 1) }, 500L * (attempt + 1))
+                                result.responseCode != BillingClient.BillingResponseCode.OK -> {
+                                    lastBillingFailedCheck = "product_query_failed"
+                                    finish(null, "Google Play product query failed. Response \${result.responseCode}: \${sanitizeDiagnosticText(result.debugMessage)}. No payment has been started.")
+                                }
+                                products.isEmpty() -> {
+                                    lastBillingFailedCheck = "product_details_not_returned"
+                                    val reason = when {
+                                        missing.any { it.statusCode == UnfetchedProduct.StatusCode.NO_ELIGIBLE_OFFER } -> "The product exists, but Google Play returned no eligible base plan for this account. Check the paid base plan's availability, not only the free trial offer."
+                                        missing.any { it.statusCode == UnfetchedProduct.StatusCode.PRODUCT_NOT_FOUND } -> "Google Play could not find this subscription for this app. Check the subscription Product ID and app package in Play Console."
+                                        missing.any { it.statusCode == UnfetchedProduct.StatusCode.INVALID_PRODUCT_ID_FORMAT } -> "The configured subscription Product ID has an invalid format."
+                                        else -> "Google Play returned no product details. Update or reopen Google Play and try again."
+                                    }
+                                    finish(null, "$reason Product: \${productIds.joinToString()}. Query response: \${result.responseCode}; product status: \${missingStatus.ifEmpty { "not supplied" }}. No payment has been started.")
+                                }
+                                else -> {
+                                    lastBillingFailedCheck = "none"
+                                    finish(products, null)
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                recordDiagnosticFailure("queryProductDetailsAsync", "product_query_exception", "Product query could not start.")
+                finish(null, "Google Play could not start the product query. No payment has been started. Please try again.")
+            }
+        }
+        handler.post {
+            diagnosticRequestedProductIds = productIds.toList()
+            diagnosticReturnedProductIds = emptyList()
+            diagnosticProductDetailsReturned = false
+            diagnosticEligibleOfferReturned = false
+            diagnosticEligibleOfferCount = 0
+            diagnosticSelectedBasePlanId = "none"
+            diagnosticSelectedOfferId = "none"
+            productDetailsList.clear()
+            handler.postDelayed({
+                if (!completed) {
+                    recordDiagnosticFailure("queryProductDetailsAsync", "product_query_timeout", "Product query timed out.")
+                    finish(null, "Google Play took too long to load subscription products. No payment has been started. Please try again.")
+                }
+            }, 20000L)
+            query(0)
+        }
+    }
+
+`;
+// Repair copies generated by older patches that used the fetch comment as their anchor.
+while (replacementImplementation.split('    fun getBillingDiagnostics():').length > 2) {
+  const start = replacementImplementation.lastIndexOf('    fun getBillingDiagnostics():');
+  const end = replacementImplementation.indexOf('    // Fetch product details\n', start);
+  if (end < start || replacementImplementation.slice(start, end).includes('fun getProductsWithRecovery(')) {
+    throw new Error('Could not safely remove duplicate Android diagnostic accessors.');
+  }
+  replacementImplementation = replacementImplementation.slice(0, start) + replacementImplementation.slice(end);
+}
+// Retain the upstream method as a stable anchor for earlier patch versions.
+if (!replacementImplementation.includes('    fun getProductsWithRecovery(')) {
+  replacementImplementation = replacementImplementation.replace('    // Fetch product details\n', recoveredProductQuery + '    // Fetch product details\n');
+} else {
+  replacementImplementation = replaceBetween(replacementImplementation, '    fun getProductsWithRecovery(', '    // Fetch product details\n', recoveredProductQuery, 'Android recoverable product query');
+}
 writeIfChanged(implementationPath, replacementImplementation);
 let replacementPlugin = fs.readFileSync(pluginPath, 'utf8');
 replacementPlugin = replaceRequired(
@@ -1721,6 +1893,27 @@ replacementPlugin = replaceRequired(
                                  put("recurringBillingPeriod", it.billingPeriod)
                              }`,
   'Android recurring price after introductory offer'
+);
+replacementPlugin = replaceRequired(
+  replacementPlugin,
+  '        billing.getProducts(productIds, productType) { productDetailsList ->',
+  `        billing.getProductsWithRecovery(productIds, productType) { productDetailsList, error ->
+            if (productDetailsList == null) {
+                call.reject(error ?: "Google Play product details are unavailable. No payment has been started.", "PRODUCT_QUERY_FAILED")
+                return@getProductsWithRecovery
+            }`,
+  'Android preserve product query failures'
+);
+replacementPlugin = replaceRequired(
+  replacementPlugin,
+  '                             val subscriptionOffers = productDetails.subscriptionOfferDetails.orEmpty()',
+  `                             val subscriptionOffers = productDetails.subscriptionOfferDetails.orEmpty().filter { offer ->
+                                 offer.pricingPhases.pricingPhaseList.any { phase ->
+                                     phase.billingPeriod == "P1M" && phase.priceAmountMicros > 0 &&
+                                         phase.recurrenceMode == com.android.billingclient.api.ProductDetails.RecurrenceMode.INFINITE_RECURRING
+                                 }
+                             }`,
+  'Android monthly subscription offer selection'
 );
 writeIfChanged(pluginPath, replacementPlugin);
 

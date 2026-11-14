@@ -45,7 +45,7 @@ import {
 import { toPng } from 'html-to-image';
 import { downloadFile } from './utils/download';
 import { checkSubscriptionContext, loadSubscriptionContext } from './subscription-context';
-import { businessOfferCopy } from './subscriptions';
+import { businessOfferCopy, businessStoreProductIds, assertBusinessVerificationProduct } from './subscriptions';
 import { secureLegalUrl, PRIVACY_NOTICE_VERSION, PUBLISHED_PRIVACY_POLICY_URL, PUBLISHED_TERMS_URL } from './privacy/config';
 import { allowSandboxBusiness } from './privacy/sandbox';
 import { clearBusinessDeviceData, readBusiness } from './business/store';
@@ -241,7 +241,7 @@ const nativeProProductIds = () => {
   return productIdList(envValue('VITE_PRO_PRODUCT_ID') || DEFAULT_PRO_PRODUCT_ID);
 };
 
-const nativeBusinessProductIds = () => productIdList(
+const nativeBusinessProductIds = () => businessStoreProductIds(Capacitor.getPlatform(),
   envValue(Capacitor.getPlatform() === 'ios' ? 'VITE_IOS_BUSINESS_PRODUCT_ID' : 'VITE_ANDROID_BUSINESS_PRODUCT_ID') ||
   envValue('VITE_BUSINESS_PRODUCT_ID') || 'business_subscription'
 );
@@ -1209,7 +1209,9 @@ export default function App() {
 
     // Use Native IAP if on mobile
     if (Capacitor.isNativePlatform()) {
+      let checkoutStarted = false;
       try {
+        let businessVerification: Parameters<typeof assertBusinessVerificationProduct>[0] = {};
         const productIds = nativeProductIds(upgradeTier);
         const purchasePlatform = Capacitor.getPlatform();
         // Query the whole store account, not only purchases mapped to this app UID.
@@ -1226,6 +1228,7 @@ export default function App() {
           const readyResponse = await fetch(billingApiUrl('/api/subscriptions/business/ready'), {signal:AbortSignal.timeout(15000),cache:'no-store'});
           const ready = await readyResponse.json();
           if (!readyResponse.ok || !ready[purchasePlatform]) throw Error('Subscription purchases and plan changes are not available yet. No payment has been started.');
+          businessVerification = ready;
           if (nativeBusinessProductIds().some(id=>nativeProProductIds().includes(id))) throw Error('Business and Pro must use different store product IDs.');
         }
         console.log("App: Starting Native Purchase flow for:", productIds);
@@ -1244,7 +1247,6 @@ export default function App() {
           productType: PRO_PRODUCT_TYPE as any
         });
         if(purchasePlatform==='ios')assertAppleSubscriptionGroup(products as Array<typeof products[number]&{subscriptionGroupId?:string}>,nativeProProductIds(),nativeBusinessProductIds());
-        console.log("App: Store products returned ->", products);
         console.info('[BillingDiagnostics] Subscription product query completed', {
           requestedProductIds: productIds,
           returnedProductCount: products.length,
@@ -1256,7 +1258,7 @@ export default function App() {
           }))
         });
 
-        const product = products.find(item => productIds.includes(item.productId));
+        const product = productIds.map(id => products.find(item => item.productId === id)).find(Boolean);
         if (!product) {
           console.warn('[BillingDiagnostics] No matching product details were returned', {
             requestedProductIds: productIds
@@ -1272,7 +1274,10 @@ export default function App() {
         }
 
         const offerToken = (product as typeof product & { offerToken?: string }).offerToken;
-        if (upgradeTier === 'business') validateBusinessStorePrice(product);
+        if (upgradeTier === 'business') {
+          assertBusinessVerificationProduct(businessVerification, purchasePlatform, product.productId);
+          validateBusinessStorePrice(product);
+        }
         if (purchasePlatform === 'android' && PRO_PRODUCT_TYPE === 'subscription' && !offerToken) {
           throw new Error(
             `Google Play returned ${product.productId}, but no eligible subscription base plan or offer was available for this account.`
@@ -1285,6 +1290,7 @@ export default function App() {
           eligibleOfferReturned: Boolean(offerToken)
         });
         if (auth.currentUser?.uid !== purchaseUser?.uid) throw Error('The signed-in account changed. No payment has been started.');
+        checkoutStarted = true;
         const transaction = await InAppPurchase.purchaseProduct({
           productId: product.productId,
           productType: PRO_PRODUCT_TYPE as any,
@@ -1321,14 +1327,22 @@ export default function App() {
           throw new Error(transaction?.errorMessage || transaction?.errorCode || 'The store did not complete the purchase.');
         }
       } catch (error: any) {
+        if (error?.code === 'PAYMENT_CANCELLED') return;
         console.error("App: Native Purchase failed", error);
         const failedAttemptDiagnostics = await readAndroidBillingDiagnostics('Go Pro purchase attempt failed');
         try {
-          const { purchases } = await InAppPurchase.getActivePurchases(nativePurchaseUserOptions(purchaseUser?.uid));
-          const tier = purchaseTier(purchases);
-          if (tier === upgradeTier && auth.currentUser?.uid === purchaseUser?.uid) {
-            await handleSuccessfulPurchase({ promptForAccount: true, tier, purchases });
-            return;
+          // Only recover a purchase after checkout may have opened. A failed
+          // product lookup cannot create a purchase and must keep its own error.
+          if (checkoutStarted) {
+            const { purchases } = await InAppPurchase.getActivePurchases({
+              ...nativePurchaseUserOptions(purchaseUser?.uid),
+              ...(Capacitor.getPlatform() === 'android' ? {requireComplete:true} : {})
+            } as any);
+            const tier = purchaseTier(purchases);
+            if (tier === upgradeTier && auth.currentUser?.uid === purchaseUser?.uid) {
+              await handleSuccessfulPurchase({ promptForAccount: true, tier, purchases });
+              return;
+            }
           }
         } catch (restoreError) {
           console.error("App: Failed to re-check purchases after purchase error", restoreError);

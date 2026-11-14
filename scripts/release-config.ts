@@ -10,7 +10,8 @@ export function validateReleaseConfig(env: Record<string, string | undefined>) {
   for (const tier of ['PRO','BUSINESS']) {
     const expected = tier==='PRO'?'pro_subscription':'business_subscription';
     for (const key of [`VITE_${tier}_PRODUCT_ID`,`VITE_IOS_${tier}_PRODUCT_ID`,`VITE_ANDROID_${tier}_PRODUCT_ID`]) {
-      if (env[key]?.trim() && env[key]!.trim()!==expected) throw Error(`${key} differs from the confirmed product ID ${expected}; verify the release configuration.`);
+      const allowed = key === 'VITE_ANDROID_BUSINESS_PRODUCT_ID' ? [expected, 'business_subsciption'] : [expected];
+      if (env[key]?.trim() && !allowed.includes(env[key]!.trim())) throw Error(`${key} differs from the confirmed product ID ${allowed.join(' or ')}; verify the release configuration.`);
     }
   }
 }
