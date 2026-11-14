@@ -9,6 +9,7 @@
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "check:release-assets": "node scripts/check-release-assets.mjs",
     "test:privacy": "node --import ./scripts/register-test-loader.mjs --test tests/privacy.test.mjs && node --import ./scripts/business-test-loader.mjs --test tests/privacy-cache.test.mjs",
+    "test:server-runtime": "npm run build:server && node --test tests/server-runtime.test.mjs",
     "test:rams": "node --import ./scripts/register-test-loader.mjs --test tests/rams.test.mjs",
     "audit:electrical": "node --import ./scripts/register-test-loader.mjs scripts/check-electrical-coverage.mjs",
     "dev": "tsx server.ts",
